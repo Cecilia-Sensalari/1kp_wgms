@@ -85,6 +85,7 @@ STANDARD_RANKS = (
     "tribe",
     "genus",
     "species",
+    "subspecies",
 )
 
 
@@ -422,6 +423,19 @@ def sample_result(
     result["ncbi_scientific_name"] = str(taxonomy["scientific_name"])
     result["ncbi_rank"] = str(taxonomy["rank"])
     result.update({key: str(value) for key, value in taxonomy["ranked"].items()})
+    # Rebuild ranked fields from the cached full lineage as well.  Taxonomy
+    # records cached by older versions of this script have no ``subspecies``
+    # entry in their ``ranked`` mapping, although their lineage arrays already
+    # contain it.  This makes old caches compatible without another NCBI call.
+    result.update(
+        {
+            str(rank): str(name)
+            for rank, name in zip(
+                taxonomy["lineage_ranks"], taxonomy["lineage_names"]
+            )
+            if rank in STANDARD_RANKS
+        }
+    )
     result["lineage_names"] = ";".join(taxonomy["lineage_names"])
     result["lineage_taxids"] = ";".join(taxonomy["lineage_taxids"])
     result["lineage_ranks"] = ";".join(taxonomy["lineage_ranks"])
