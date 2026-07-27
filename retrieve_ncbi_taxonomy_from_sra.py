@@ -53,7 +53,16 @@ import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Mapping, MutableMapping, Sequence
+from typing import (
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+)
 from xml.etree import ElementTree
 
 
@@ -358,8 +367,91 @@ def retrieve_taxonomy(
         )
 
 
+GapKey = Optional[str]
+
+
+def split_lineage(
+    taxonomy: Mapping[str, object],
+) -> tuple[Dict[str, str], Dict[GapKey, List[str]]]:
+    """Split a lineage into standard ranks and ordered non-standard gaps."""
+    standard: Dict[str, str] = {}
+    gaps: Dict[GapKey, List[str]] = {}
+    pending: List[str] = []
+
+    names = taxonomy.get("lineage_names", [])
+    ranks = taxonomy.get("lineage_ranks", [])
+    if not isinstance(names, list) or not isinstance(ranks, list):
+        return standard, gaps
+
+    for rank_value, name_value in zip(ranks, names):
+        rank = str(rank_value)
+        name = str(name_value)
+        if rank in STANDARD_RANKS:
+            if pending:
+                # Key by the next standard rank.  The preceding standard rank
+                # may be absent in some lineages; including it in the heading
+                # made the apparent column order jump backwards.
+                gaps[rank] = pending
+                pending = []
+            standard[rank] = name
+        else:
+            pending.append(name)
+
+    if pending:
+        gaps[None] = pending
+    return standard, gaps
+
+
+def nonstandard_gap_widths(
+    cache: Mapping[str, object], taxids: Sequence[str]
+) -> Dict[GapKey, int]:
+    """Measure the widest non-standard segment before each standard rank."""
+    taxonomy_cache = cache["taxonomy"]
+    assert isinstance(taxonomy_cache, dict)
+    widths: Dict[GapKey, int] = {}
+    for taxid in taxids:
+        taxonomy = taxonomy_cache.get(taxid)
+        if not isinstance(taxonomy, dict):
+            continue
+        _, gaps = split_lineage(taxonomy)
+        for key, names in gaps.items():
+            widths[key] = max(widths.get(key, 0), len(names))
+    return widths
+
+
+def rank_heading(rank: str) -> str:
+    """Convert an NCBI rank value to the requested CSV heading style."""
+    return rank.replace(" ", "_").title()
+
+
+def gap_heading(next_rank: GapKey, position: int) -> str:
+    """Name a numbered non-standard column by its following standard rank."""
+    if next_rank is None:
+        return f"Nonstandard_after_Last_Standard_{position}"
+    return f"Nonstandard_before_{rank_heading(next_rank)}_{position}"
+
+
+def taxonomy_columns(gap_widths: Mapping[GapKey, int]) -> List[str]:
+    """Interleave non-standard gap columns with fixed standard-rank columns."""
+    columns: List[str] = []
+    for right_rank in STANDARD_RANKS:
+        columns.extend(
+            gap_heading(right_rank, position)
+            for position in range(1, gap_widths.get(right_rank, 0) + 1)
+        )
+        columns.append(rank_heading(right_rank))
+
+    columns.extend(
+        gap_heading(None, position)
+        for position in range(1, gap_widths.get(None, 0) + 1)
+    )
+    return columns
+
+
 def sample_result(
-    source: Mapping[str, str], cache: Mapping[str, object]
+    source: Mapping[str, str],
+    cache: Mapping[str, object],
+    gap_widths: Mapping[GapKey, int],
 ) -> Dict[str, str]:
     """Combine all SRA results for one workbook row into one output row.
 
@@ -381,7 +473,7 @@ def sample_result(
     assert isinstance(accession_cache, dict) and isinstance(taxonomy_cache, dict)
     accession_text = source.get("NCBI SRA Accession IDs", "")
     accessions = ACCESSION_PATTERN.findall(accession_text.upper())
-    result = {
+    result: Dict[str, str] = {
         "sample_id": source.get("1KP Index ID", ""),
         "reported_species": source.get("Species", ""),
         "sra_accessions": ";".join(accessions),
@@ -389,12 +481,16 @@ def sample_result(
         "taxid": "",
         "ncbi_scientific_name": "",
         "ncbi_rank": "",
-        **{rank: "" for rank in STANDARD_RANKS},
-        "lineage_names": "",
-        "lineage_taxids": "",
-        "lineage_ranks": "",
-        "status": "",
     }
+    result.update({column: "" for column in taxonomy_columns(gap_widths)})
+    result.update(
+        {
+            "lineage_names": "",
+            "lineage_taxids": "",
+            "lineage_ranks": "",
+            "status": "",
+        }
+    )
     if not accessions:
         result["status"] = "no_sra_accession"
         return result
@@ -422,20 +518,12 @@ def sample_result(
         return result
     result["ncbi_scientific_name"] = str(taxonomy["scientific_name"])
     result["ncbi_rank"] = str(taxonomy["rank"])
-    result.update({key: str(value) for key, value in taxonomy["ranked"].items()})
-    # Rebuild ranked fields from the cached full lineage as well.  Taxonomy
-    # records cached by older versions of this script have no ``subspecies``
-    # entry in their ``ranked`` mapping, although their lineage arrays already
-    # contain it.  This makes old caches compatible without another NCBI call.
-    result.update(
-        {
-            str(rank): str(name)
-            for rank, name in zip(
-                taxonomy["lineage_ranks"], taxonomy["lineage_names"]
-            )
-            if rank in STANDARD_RANKS
-        }
-    )
+    standard, gaps = split_lineage(taxonomy)
+    for rank, name in standard.items():
+        result[rank_heading(rank)] = name
+    for key, names in gaps.items():
+        for position, name in enumerate(names, 1):
+            result[gap_heading(key, position)] = name
     result["lineage_names"] = ";".join(taxonomy["lineage_names"])
     result["lineage_taxids"] = ";".join(taxonomy["lineage_taxids"])
     result["lineage_ranks"] = ";".join(taxonomy["lineage_ranks"])
@@ -473,7 +561,8 @@ def main() -> None:
     )
     retrieve_taxonomy(client, taxids, cache, args.cache)
 
-    output_rows = [sample_result(row, cache) for row in source_rows]
+    gap_widths = nonstandard_gap_widths(cache, taxids)
+    output_rows = [sample_result(row, cache, gap_widths) for row in source_rows]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = list(output_rows[0]) if output_rows else []
     with args.output.open("w", newline="", encoding="utf-8") as handle:
