@@ -1,16 +1,27 @@
 ﻿#!/usr/bin/env python3
-"""Annotate a 1KP species tree with WGM/WGD IDs from supplementary tables.
+"""Annotate the rooted 1KP species tree with WGM/WGD IDs using ETE3.
 
 [Generated via AI, tested by Cecilia]
 
-The script places each event on the MRCA branch of the 1KP species codes that
-support that event in Supplementary Table 3. It writes:
+The 1KP/Barker release provides the WGM/WGD summary table and the figure PDF,
+but not a machine-readable Newick tree with WGM labels already attached to
+branches. This script reconstructs a practical branch annotation from the
+supplementary tables:
 
-1. an NHX-commented Newick tree with ``WGM=...`` on annotated branches
-2. a TSV audit file describing every placement
+1. Supplementary Table 2 defines the official WGM/WGD IDs.
+2. Supplementary Table 3 lists which 1KP taxa carry each WGM/WGD in their WGD
+   history columns.
+3. The rooted ASTRAL species tree provides the topology.
+4. Each WGM/WGD is placed on the MRCA branch of its supporting taxa.
 
-It uses only the Python standard library, including direct XLSX parsing through
-zip/xml, so no openpyxl/pandas installation is required.
+Outputs:
+
+- an NHX-annotated Newick tree containing ``WGM=...`` branch features
+- a TSV audit table explaining every placement and its support taxa
+
+ETE3 is used for all tree parsing, MRCA calculation, and tree writing. XLSX
+files are read directly with Python's standard library so that only the tree
+library needs to be installed.
 """
 
 from __future__ import annotations
@@ -21,13 +32,20 @@ import re
 import sys
 import zipfile
 from collections import defaultdict
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 from xml.etree import ElementTree as ET
 
+try:
+    from ete3 import Tree
+except ImportError as exc:
+    raise SystemExit(
+        "Missing dependency: ete3. Install it in this environment with `pip install ete3`."
+    ) from exc
 
-#ROOT = Path(r"\\psb.ugent.be\shares\biocomp\groups\group_esb\cesen\1kp")
+
+# Project defaults. Override these on the command line if running from another
+# checkout, another platform, or a test directory.
 ROOT = Path(r"/group/esb/cesen/1kp")
 DEFAULT_TABLE2 = ROOT / "source_data/1.species_dataset/1kp_paper_2019_suptab2_wgm.xlsx"
 DEFAULT_TABLE3 = ROOT / "source_data/1.species_dataset/1kp_paper_2019_suptab3_ks.xlsx"
@@ -38,6 +56,7 @@ DEFAULT_TREE = (
 )
 
 
+# Namespace abbreviations used inside the XLSX XML files.
 XML_NS = {
     "a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
     "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
@@ -45,243 +64,38 @@ XML_NS = {
 
 
 # ---------------------------------------------------------------------------
-# Minimal tree representation and Newick parser/writer
-# ---------------------------------------------------------------------------
-#
-# The script avoids BioPython/ETE dependencies, so it keeps just enough tree
-# structure to parse Newick, walk parent/child relationships, calculate MRCAs,
-# and write the tree back with NHX comments.
-
-@dataclass(eq=False)
-class Node:
-    """Small Newick tree node used for MRCA calculations."""
-
-    name: str = ""
-    length: str = ""
-    comments: list[str] = field(default_factory=list)
-    children: list["Node"] = field(default_factory=list)
-    parent: "Node | None" = None
-    node_id: int = -1
-    tip_names: set[str] = field(default_factory=set)
-
-    @property
-    def is_tip(self) -> bool:
-        return not self.children
-
-
-class NewickParser:
-    """Recursive-descent parser for the simple Newick produced by ASTRAL."""
-
-    def __init__(self, text: str) -> None:
-        self.text = text.strip()
-        self.i = 0
-        self.next_node_id = 0
-
-    def parse(self) -> Node:
-        """Parse the full Newick string and return the root node."""
-        root = self._subtree()
-        self._skip_ws()
-        if self.i < len(self.text) and self.text[self.i] == ";":
-            self.i += 1
-        self._skip_ws()
-        if self.i != len(self.text):
-            raise ValueError(f"Unexpected trailing Newick text at offset {self.i}")
-        return root
-
-    def _new_node(self, name: str = "") -> Node:
-        node = Node(name=name, node_id=self.next_node_id)
-        self.next_node_id += 1
-        return node
-
-    def _subtree(self) -> Node:
-        """Parse either an internal subtree ``(...)label:length`` or a tip."""
-        self._skip_ws()
-        if self._peek() == "(":
-            self.i += 1
-            node = self._new_node()
-            while True:
-                child = self._subtree()
-                child.parent = node
-                node.children.append(child)
-                self._skip_ws()
-                char = self._peek()
-                if char == ",":
-                    self.i += 1
-                    continue
-                if char == ")":
-                    self.i += 1
-                    break
-                raise ValueError(f"Expected ',' or ')' at offset {self.i}")
-            node.name = self._read_label()
-            node.comments.extend(self._read_comments())
-            node.length = self._read_length()
-            return node
-
-        node = self._new_node(self._read_label())
-        if not node.name:
-            raise ValueError(f"Expected tip label at offset {self.i}")
-        node.comments.extend(self._read_comments())
-        node.length = self._read_length()
-        return node
-
-    def _peek(self) -> str:
-        return self.text[self.i] if self.i < len(self.text) else ""
-
-    def _skip_ws(self) -> None:
-        while self.i < len(self.text) and self.text[self.i].isspace():
-            self.i += 1
-
-    def _read_label(self) -> str:
-        self._skip_ws()
-        start = self.i
-        while self.i < len(self.text) and self.text[self.i] not in ",():;[]":
-            self.i += 1
-        return self.text[start : self.i].strip()
-
-    def _read_comments(self) -> list[str]:
-        """Preserve any existing Newick comments instead of discarding them."""
-        comments: list[str] = []
-        self._skip_ws()
-        while self._peek() == "[":
-            start = self.i
-            depth = 0
-            while self.i < len(self.text):
-                if self.text[self.i] == "[":
-                    depth += 1
-                elif self.text[self.i] == "]":
-                    depth -= 1
-                    if depth == 0:
-                        self.i += 1
-                        comments.append(self.text[start : self.i])
-                        break
-                self.i += 1
-            else:
-                raise ValueError(f"Unclosed Newick comment starting at offset {start}")
-            self._skip_ws()
-        return comments
-
-    def _read_length(self) -> str:
-        self._skip_ws()
-        if self._peek() != ":":
-            return ""
-        self.i += 1
-        start = self.i
-        while self.i < len(self.text) and self.text[self.i] not in ",();":
-            self.i += 1
-        return self.text[start : self.i].strip()
-
-
-def quote_newick_label(label: str) -> str:
-    """Quote labels only when required by Newick syntax."""
-    if not label:
-        return ""
-    if re.search(r"[\s,:;()\[\]']", label):
-        return "'" + label.replace("'", "''") + "'"
-    return label
-
-
-def nhx_escape(value: str) -> str:
-    """Escape separators that would confuse NHX consumers."""
-    return (
-        value.replace("\\", "_")
-        .replace(":", "_")
-        .replace(",", "_")
-        .replace(";", "_")
-        .replace("]", "_")
-        .replace("[", "_")
-        .replace(" ", "_")
-    )
-
-
-def to_newick(node: Node, annotations: dict[int, list[str]]) -> str:
-    """Serialize the tree, adding ``[&&NHX:WGM=...]`` to annotated branches."""
-    comments = list(node.comments)
-    if node.node_id in annotations:
-        wgms = "|".join(nhx_escape(wgm) for wgm in sorted(annotations[node.node_id]))
-        comments.append(f"[&&NHX:WGM={wgms}]")
-
-    comment_text = "".join(comments)
-    length_text = f":{node.length}" if node.length else ""
-    if node.is_tip:
-        return f"{quote_newick_label(node.name)}{comment_text}{length_text}"
-
-    child_text = ",".join(to_newick(child, annotations) for child in node.children)
-    return f"({child_text}){quote_newick_label(node.name)}{comment_text}{length_text}"
-
-
-def iter_nodes_postorder(node: Node) -> Iterable[Node]:
-    """Yield children before parents, which makes clade-tip indexing easy."""
-    for child in node.children:
-        yield from iter_nodes_postorder(child)
-    yield node
-
-
-def index_tree(root: Node) -> dict[str, Node]:
-    """Map tip names to nodes and cache the descendant tips below each node."""
-    tip_to_node: dict[str, Node] = {}
-    for node in iter_nodes_postorder(root):
-        if node.is_tip:
-            node.tip_names = {node.name}
-            if node.name in tip_to_node:
-                raise ValueError(f"Duplicate tip label in tree: {node.name}")
-            tip_to_node[node.name] = node
-        else:
-            node.tip_names = set()
-            for child in node.children:
-                node.tip_names.update(child.tip_names)
-    return tip_to_node
-
-
-def ancestors(node: Node) -> list[Node]:
-    """Return the path from a node up to the root."""
-    out = []
-    while node is not None:
-        out.append(node)
-        node = node.parent
-    return out
-
-
-def find_mrca(taxa: Iterable[str], tip_to_node: dict[str, Node]) -> tuple[Node | None, list[str], list[str]]:
-    """Find the most recent common ancestor of the input taxon labels.
-
-    The function also reports which requested taxa were present or missing in
-    the tree, so the audit table can flag placements based on incomplete data.
-    """
-    present = sorted(taxon for taxon in set(taxa) if taxon in tip_to_node)
-    missing = sorted(taxon for taxon in set(taxa) if taxon not in tip_to_node)
-    if not present:
-        return None, present, missing
-
-    ancestor_lists = [ancestors(tip_to_node[taxon]) for taxon in present]
-    common_ids = {node.node_id for node in ancestor_lists[0]}
-    for lineage in ancestor_lists[1:]:
-        common_ids.intersection_update(node.node_id for node in lineage)
-
-    for node in ancestor_lists[0]:
-        if node.node_id in common_ids:
-            return node, present, missing
-    raise RuntimeError("Could not find MRCA despite present taxa")
-
-
-# ---------------------------------------------------------------------------
-# XLSX helpers
+# XLSX reading helpers
 # ---------------------------------------------------------------------------
 #
 # XLSX files are ZIP archives containing XML. The 1KP supplementary workbooks
-# are simple enough that we can read sheet1 directly and avoid optional Python
-# packages on HPC/login nodes.
+# are simple enough that we can read the first worksheet directly. This avoids
+# requiring pandas/openpyxl on top of ETE3.
+
 
 def column_index(cell_ref: str) -> int:
-    """Convert an Excel cell reference such as ``C42`` to a 1-based column."""
-    letters = re.match(r"[A-Z]+", cell_ref).group(0)
+    """Convert an Excel cell reference such as ``C42`` to a 1-based column.
+
+    Spreadsheet rows are sparse in the XML: blank cells may simply be omitted.
+    Converting ``A``, ``B``, ..., ``AA`` to numeric column indices lets us put
+    each value under the correct header even when intermediate cells are blank.
+    """
+    match = re.match(r"[A-Z]+", cell_ref)
+    if match is None:
+        raise ValueError(f"Cannot parse Excel cell reference: {cell_ref}")
+
     index = 0
-    for char in letters:
+    for char in match.group(0):
         index = index * 26 + (ord(char) - ord("A") + 1)
     return index
 
 
 def cell_text(cell: ET.Element, shared_strings: list[str]) -> str:
-    """Return the displayed text for a worksheet cell."""
+    """Return the displayed text for one XLSX worksheet cell.
+
+    Excel stores repeated strings in a shared string table and stores numbers
+    directly in the worksheet XML. This helper hides that difference so the rest
+    of the script can treat all cells as strings.
+    """
     cell_type = cell.attrib.get("t")
     if cell_type == "s":
         value = cell.findtext("a:v", default="", namespaces=XML_NS)
@@ -292,10 +106,11 @@ def cell_text(cell: ET.Element, shared_strings: list[str]) -> str:
 
 
 def read_xlsx_rows(path: Path, sheet_xml: str = "xl/worksheets/sheet1.xml") -> list[dict[str, str]]:
-    """Read the first worksheet of a simple XLSX file as dictionaries.
+    """Read a simple XLSX worksheet as a list of row dictionaries.
 
-    Row 1 is interpreted as the header. Later rows are returned as
-    ``{header: value}`` dictionaries, preserving empty strings for blank cells.
+    The first row is interpreted as the header. Every following non-empty row is
+    returned as ``{header: value}``, with blank cells represented by empty
+    strings. This is enough for the 1KP supplementary tables used here.
     """
     with zipfile.ZipFile(path) as zf:
         shared_strings: list[str] = []
@@ -310,9 +125,8 @@ def read_xlsx_rows(path: Path, sheet_xml: str = "xl/worksheets/sheet1.xml") -> l
             values: dict[int, str] = {}
             for cell in row.findall("a:c", XML_NS):
                 ref = cell.attrib.get("r", "")
-                if not ref:
-                    continue
-                values[column_index(ref)] = cell_text(cell, shared_strings)
+                if ref:
+                    values[column_index(ref)] = cell_text(cell, shared_strings)
             raw_rows.append(values)
 
     if not raw_rows:
@@ -331,10 +145,17 @@ def read_xlsx_rows(path: Path, sheet_xml: str = "xl/worksheets/sheet1.xml") -> l
 # 1KP supplementary table interpretation
 # ---------------------------------------------------------------------------
 
+
 def split_wgm_ids(value: str) -> list[str]:
-    """Split WGM cells that may contain one or more comma/space separated IDs."""
+    """Split a WGM/WGD cell into one or more event IDs.
+
+    Most Table 3 cells contain a single event ID, but the parser also accepts
+    comma-, semicolon-, or whitespace-separated lists. ``NA`` and blank cells are
+    ignored.
+    """
     if not value:
         return []
+
     ids = []
     for item in re.split(r"[,;]\s*|\s+", value.strip()):
         item = item.strip()
@@ -344,12 +165,22 @@ def split_wgm_ids(value: str) -> list[str]:
 
 
 def wgm_ids_from_table2(path: Path) -> set[str]:
-    """Read the official WGM/WGD IDs from Supplementary Table 2."""
+    """Read the official WGM/WGD IDs from Supplementary Table 2.
+
+    Table 2 is used as a whitelist. By default, IDs seen in Table 3 but absent
+    from Table 2 are skipped, because Table 2 is the paper's summary list of
+    inferred WGMs/WGDs.
+    """
     return {row["WGD ID"] for row in read_xlsx_rows(path) if row.get("WGD ID")}
 
 
 def wgm_taxa_from_table3(path: Path) -> dict[str, set[str]]:
-    """Build ``WGM ID -> supporting 1KP species codes`` from Table 3."""
+    """Build a mapping from WGM/WGD ID to supporting 1KP species codes.
+
+    Supplementary Table 3 is organized by taxon. The columns ``WGD 1``, ``WGD 2``,
+    and ``WGD 3`` describe the WGM/WGD history inferred for that taxon. Inverting
+    those columns gives the taxon set used to place each event on the tree.
+    """
     out: dict[str, set[str]] = defaultdict(set)
     for row in read_xlsx_rows(path):
         code = row.get("1KP Code", "").strip()
@@ -362,28 +193,87 @@ def wgm_taxa_from_table3(path: Path) -> dict[str, set[str]]:
 
 
 # ---------------------------------------------------------------------------
-# Outputs and command-line interface
+# Tree placement helpers
 # ---------------------------------------------------------------------------
 
-def write_tsv(path: Path, rows: list[dict[str, object]]) -> None:
-    """Write a placement audit table that explains every tree annotation."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = [
-        "WGM",
-        "node_id",
-        "support_taxa_count",
-        "present_taxa_count",
-        "missing_taxa_count",
-        "mrca_tip_count",
-        "exact_support_clade",
-        "placement_note",
-        "support_taxa",
-        "missing_taxa",
-    ]
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t", lineterminator="\n")
-        writer.writeheader()
-        writer.writerows(rows)
+
+def nhx_escape(value: str) -> str:
+    """Escape separators that would confuse NHX feature syntax.
+
+    WGM IDs are usually compact strings such as ``AMBOalpha``. This helper makes
+    the output more robust if a future table contains spaces or punctuation.
+    """
+    return (
+        value.replace("\\", "_")
+        .replace(":", "_")
+        .replace(",", "_")
+        .replace(";", "_")
+        .replace("]", "_")
+        .replace("[", "_")
+        .replace(" ", "_")
+    )
+
+
+def assign_node_ids(tree: Tree) -> None:
+    """Attach stable numeric IDs to ETE nodes for the audit table.
+
+    ETE nodes do not come with persistent IDs. The IDs written here are not
+    biological identifiers; they are a convenient way to connect a TSV row to a
+    branch in this specific run.
+    """
+    for node_id, node in enumerate(tree.traverse("postorder")):
+        node.add_feature("placement_node_id", node_id)
+
+
+def find_mrca(tree: Tree, taxa: Iterable[str], tree_tip_names: set[str]):
+    """Find the MRCA branch for a set of support taxa.
+
+    Returns ``(node, present, missing)``. ``present`` contains support taxa found
+    in the tree; ``missing`` contains support taxa listed in Table 3 but absent
+    from this tree. If only one support taxon is present, the event is placed on
+    that terminal branch.
+    """
+    taxa = set(taxa)
+    present = sorted(taxa.intersection(tree_tip_names))
+    missing = sorted(taxa.difference(tree_tip_names))
+    if not present:
+        return None, present, missing
+    if len(present) == 1:
+        return tree & present[0], present, missing
+    return tree.get_common_ancestor(present), present, missing
+
+
+def add_wgm_annotation(node, wgm_id: str) -> None:
+    """Append one WGM/WGD ID to an ETE node's NHX ``WGM`` feature.
+
+    Several events can map to the same branch. They are stored as a pipe-separated
+    list so ETE writes a single NHX feature such as ``[&&NHX:WGM=A|B|C]``.
+    """
+    current = []
+    if hasattr(node, "WGM") and node.WGM:
+        current = str(node.WGM).split("|")
+    current.append(nhx_escape(wgm_id))
+    node.add_feature("WGM", "|".join(sorted(set(current))))
+
+
+def placement_note(present_count: int, mrca_tip_count: int) -> tuple[bool, str]:
+    """Describe how precise the MRCA placement is.
+
+    Exact clade matches are the easiest to trust. Single-taxon and subset-of-MRCA
+    placements are still useful annotations, but should be reviewed before being
+    treated as final curated placements.
+    """
+    exact = mrca_tip_count == present_count
+    if present_count == 1:
+        return exact, "single sampled support taxon; placed on terminal branch"
+    if exact:
+        return exact, "support taxa exactly match MRCA clade"
+    return exact, "support taxa are a subset of MRCA clade"
+
+
+# ---------------------------------------------------------------------------
+# Outputs and command-line interface
+# ---------------------------------------------------------------------------
 
 
 def default_output_paths(tree_path: Path) -> tuple[Path, Path]:
@@ -396,12 +286,34 @@ def default_output_paths(tree_path: Path) -> tuple[Path, Path]:
     return out_tree, out_tsv
 
 
+def write_tsv(path: Path, rows: list[dict[str, object]]) -> None:
+    """Write the audit table that explains every tree annotation."""
+    fieldnames = [
+        "WGM",
+        "node_id",
+        "support_taxa_count",
+        "present_taxa_count",
+        "missing_taxa_count",
+        "mrca_tip_count",
+        "exact_support_clade",
+        "placement_note",
+        "support_taxa",
+        "missing_taxa",
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t", lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
-    """Create the CLI, keeping project-specific paths as overridable defaults."""
+    """Create the command-line interface and document all override points."""
     parser = argparse.ArgumentParser(
         description=(
-            "Place 1KP WGM/WGD IDs onto a rooted Newick tree using the MRCA of "
-            "supporting taxa listed in Supplementary Table 3."
+            "Place 1KP WGM/WGD IDs onto a rooted Newick tree using the MRCA "
+            "of supporting taxa listed in Supplementary Table 3. Tree parsing "
+            "and MRCA calculations are handled by ETE3."
         )
     )
     parser.add_argument("--tree", type=Path, default=DEFAULT_TREE, help="Rooted 1KP species tree in Newick format.")
@@ -409,6 +321,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ks-table", type=Path, default=DEFAULT_TABLE3, help="Supplementary Table 3 Ks/WGD history XLSX.")
     parser.add_argument("--out-tree", type=Path, default=None, help="Output NHX-annotated Newick tree.")
     parser.add_argument("--out-tsv", type=Path, default=None, help="Output placement audit TSV.")
+    parser.add_argument(
+        "--ete-format",
+        type=int,
+        default=0,
+        help=(
+            "ETE3 Newick format code for input/output. Default 0 is intended "
+            "for the ASTRAL-style tree with internal support values and branch lengths."
+        ),
+    )
     parser.add_argument(
         "--include-unlisted",
         action="store_true",
@@ -426,47 +347,46 @@ def main(argv: list[str] | None = None) -> int:
     if args.out_tsv is not None:
         out_tsv = args.out_tsv
 
+    # Read the two evidence tables: Table 2 defines the valid event IDs, while
+    # Table 3 tells us which species codes support each event.
     valid_wgms = wgm_ids_from_table2(args.wgm_table)
     wgm_to_taxa = wgm_taxa_from_table3(args.ks_table)
 
-    root = NewickParser(args.tree.read_text(encoding="utf-8")).parse()
-    tip_to_node = index_tree(root)
+    # ETE3 handles the real tree work: parsing Newick, finding leaves, and
+    # calculating MRCAs. Node IDs are only for human review in the TSV.
+    tree = Tree(str(args.tree), format=args.ete_format)
+    assign_node_ids(tree)
+    tree_tip_names = set(tree.get_leaf_names())
 
-    # Each event is placed independently. Multiple WGM/WGD IDs may map to the
-    # same branch, so annotations are stored as node_id -> list of IDs.
-    annotations: dict[int, list[str]] = defaultdict(list)
     audit_rows: list[dict[str, object]] = []
     skipped = 0
+    annotated_node_ids: set[int] = set()
+
+    # Place every WGM independently. If several WGMs map to one branch, the WGM
+    # feature accumulates them as a pipe-separated list.
     for wgm_id in sorted(wgm_to_taxa):
         if not args.include_unlisted and wgm_id not in valid_wgms:
             skipped += 1
             continue
 
-        mrca, present, missing = find_mrca(wgm_to_taxa[wgm_id], tip_to_node)
+        mrca, present, missing = find_mrca(tree, wgm_to_taxa[wgm_id], tree_tip_names)
         if mrca is None:
             skipped += 1
             continue
 
-        annotations[mrca.node_id].append(wgm_id)
+        add_wgm_annotation(mrca, wgm_id)
+        annotated_node_ids.add(mrca.placement_node_id)
 
-        # These notes make it easy to review placements that are less precise
-        # than a clean "all and only these taxa" clade match.
-        exact = len(mrca.tip_names) == len(present)
-        if len(present) == 1:
-            note = "single sampled support taxon; placed on terminal branch"
-        elif exact:
-            note = "support taxa exactly match MRCA clade"
-        else:
-            note = "support taxa are a subset of MRCA clade"
-
+        mrca_tip_count = len(mrca.get_leaf_names())
+        exact, note = placement_note(len(present), mrca_tip_count)
         audit_rows.append(
             {
                 "WGM": wgm_id,
-                "node_id": mrca.node_id,
+                "node_id": mrca.placement_node_id,
                 "support_taxa_count": len(wgm_to_taxa[wgm_id]),
                 "present_taxa_count": len(present),
                 "missing_taxa_count": len(missing),
-                "mrca_tip_count": len(mrca.tip_names),
+                "mrca_tip_count": mrca_tip_count,
                 "exact_support_clade": str(exact).lower(),
                 "placement_note": note,
                 "support_taxa": ",".join(present),
@@ -474,8 +394,9 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
 
+    # ``features=["WGM"]`` tells ETE3 to write the WGM feature as NHX comments.
     out_tree.parent.mkdir(parents=True, exist_ok=True)
-    out_tree.write_text(to_newick(root, annotations) + ";\n", encoding="utf-8")
+    tree.write(outfile=str(out_tree), format=args.ete_format, features=["WGM"])
     write_tsv(out_tsv, sorted(audit_rows, key=lambda row: str(row["WGM"])))
 
     print(f"Wrote annotated tree: {out_tree}")
@@ -483,7 +404,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Table 2 WGM IDs:      {len(valid_wgms)}")
     print(f"Table 3 WGM IDs:      {len(wgm_to_taxa)}")
     print(f"Annotated WGM IDs:    {len(audit_rows)}")
-    print(f"Annotated nodes:      {len(annotations)}")
+    print(f"Annotated nodes:      {len(annotated_node_ids)}")
     if skipped:
         print(f"Skipped WGM IDs:      {skipped}", file=sys.stderr)
     return 0
@@ -491,4 +412,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
