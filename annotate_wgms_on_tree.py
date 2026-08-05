@@ -16,7 +16,7 @@ supplementary tables:
 
 Outputs:
 
-- an NHX-annotated Newick tree containing ``WGM=...`` branch features
+- an NHX-annotated Newick tree containing ``WGM1=...``, ``WGM2=...`` branch features
 - a TSV audit table explaining every placement and its support taxa
 
 ETE3 is used for all tree parsing, MRCA calculation, and tree writing. XLSX
@@ -208,6 +208,7 @@ def nhx_escape(value: str) -> str:
         .replace(":", "_")
         .replace(",", "_")
         .replace(";", "_")
+        .replace("|", "_")
         .replace("]", "_")
         .replace("[", "_")
         .replace(" ", "_")
@@ -244,17 +245,27 @@ def find_mrca(tree: Tree, taxa: Iterable[str], tree_tip_names: set[str]):
 
 
 def add_wgm_annotation(node, wgm_id: str) -> None:
-    """Append one WGM/WGD ID to an ETE node's NHX ``WGM`` feature.
+    """Append one WGM/WGD ID to an ETE node as NHX-compatible features.
 
-    Several events can map to the same branch. They are stored as a pipe-separated
-    list so ETE writes a single NHX feature such as ``[&&NHX:WGM=A|B|C]``.
+    NHX stores annotations as colon-separated ``key=value`` fields. Some tools,
+    including iTOL, can misread a custom value containing ``|``. To keep
+    multi-WGM branches parser-friendly, each event gets its own key:
+    ``WGM1=A:WGM2=B``. ``WGM_label`` is a comma-separated convenience label for
+    scripts that want one display string.
     """
     current = []
-    if hasattr(node, "WGM") and node.WGM:
-        current = str(node.WGM).split("|")
-    current.append(nhx_escape(wgm_id))
-    node.add_feature("WGM", "|".join(sorted(set(current))))
+    if hasattr(node, "WGM_label") and node.WGM_label:
+        current = [item.strip() for item in str(node.WGM_label).split(",") if item.strip()]
+    elif hasattr(node, "WGM") and node.WGM:
+        current = [item.strip() for item in re.split(r"[|,]", str(node.WGM)) if item.strip()]
 
+    current.append(nhx_escape(wgm_id))
+    current = sorted(set(current))
+
+    for index, event_id in enumerate(current, start=1):
+        node.add_feature(f"WGM{index}", event_id)
+    node.add_feature("WGM_count", len(current))
+    node.add_feature("WGM_label", ",".join(current))
 
 def placement_note(present_count: int, mrca_tip_count: int) -> tuple[bool, str]:
     """Describe how precise the MRCA placement is.
@@ -362,8 +373,8 @@ def main(argv: list[str] | None = None) -> int:
     skipped = 0
     annotated_node_ids: set[int] = set()
 
-    # Place every WGM independently. If several WGMs map to one branch, the WGM
-    # feature accumulates them as a pipe-separated list.
+    # Place every WGM independently. If several WGMs map to one branch, each event
+    # gets its own NHX key: WGM1=..., WGM2=..., etc.
     for wgm_id in sorted(wgm_to_taxa):
         if not args.include_unlisted and wgm_id not in valid_wgms:
             skipped += 1
@@ -394,9 +405,12 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
 
-    # ``features=["WGM"]`` tells ETE3 to write the WGM feature as NHX comments.
+    # Tell ETE3 which custom node features should be written as NHX tags. We list
+    # many WGM slots so branches with multiple events retain separate keys.
     out_tree.parent.mkdir(parents=True, exist_ok=True)
-    tree.write(outfile=str(out_tree), format=args.ete_format, features=["WGM"])
+    max_wgms_per_node = max((int(node.WGM_count) for node in tree.traverse() if hasattr(node, "WGM_count")), default=0)
+    nhx_features = ["WGM_label", "WGM_count"] + [f"WGM{i}" for i in range(1, max_wgms_per_node + 1)]
+    tree.write(outfile=str(out_tree), format=args.ete_format, features=nhx_features)
     write_tsv(out_tsv, sorted(audit_rows, key=lambda row: str(row["WGM"])))
 
     print(f"Wrote annotated tree: {out_tree}")
