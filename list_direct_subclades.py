@@ -4,7 +4,7 @@
 List direct children or descendants of a chosen rank in 1KP taxonomy,
 using as input the taxonomy file based on the 1KP species list.
 
-[Generate via AI, tested by Cecilia]
+[Generated via AI, tested by Cecilia]
 
 python list_direct_subclades.py species "Oenothera elata" subspecies
 Oenothera elata subsp. elata
