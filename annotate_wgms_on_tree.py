@@ -371,6 +371,8 @@ def main(argv: list[str] | None = None) -> int:
 
     audit_rows: list[dict[str, object]] = []
     skipped = 0
+    skipped_list_not_valid_wgms = []
+    skipped_list_no_mrca = []
     annotated_node_ids: set[int] = set()
 
     # Place every WGM independently. If several WGMs map to one branch, each event
@@ -378,11 +380,13 @@ def main(argv: list[str] | None = None) -> int:
     for wgm_id in sorted(wgm_to_taxa):
         if not args.include_unlisted and wgm_id not in valid_wgms:
             skipped += 1
+            skipped_list_not_valid_wgms.append(wgm_id)
             continue
 
         mrca, present, missing = find_mrca(tree, wgm_to_taxa[wgm_id], tree_tip_names)
         if mrca is None:
             skipped += 1
+            skipped_list_no_mrca.append(wgm_id)
             continue
 
         add_wgm_annotation(mrca, wgm_id)
@@ -420,7 +424,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Annotated WGM IDs:    {len(audit_rows)}")
     print(f"Annotated nodes:      {len(annotated_node_ids)}")
     if skipped:
-        print(f"Skipped WGM IDs:      {skipped}", file=sys.stderr)
+        print(f"Skipped WGM IDs            :      {skipped}", file=sys.stderr)
+        print(f"  Not in Table 2 (WGM list):     {skipped_list_not_valid_wgms}", file=sys.stderr)
+        print(f"  No MRCAs found           :     {skipped_list_no_mrca}", file=sys.stderr)
     return 0
 
 
