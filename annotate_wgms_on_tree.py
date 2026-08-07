@@ -47,8 +47,8 @@ except ImportError as exc:
 # Project defaults. Override these on the command line if running from another
 # checkout, another platform, or a test directory.
 ROOT = Path(r"/group/esb/cesen/1kp")
-DEFAULT_TABLE2 = ROOT / "source_data/1.species_dataset/1kp_paper_2019_suptab2_wgm.xlsx"
-DEFAULT_TABLE3 = ROOT / "source_data/1.species_dataset/1kp_paper_2019_suptab3_ks.xlsx"
+DEFAULT_TABLE2 = ROOT / "source_data/1.species_dataset/1kp_paper_2019_suptab2_wgm_EDITED.xlsx"
+DEFAULT_TABLE3 = ROOT / "source_data/1.species_dataset/1kp_paper_2019_suptab3_ks_EDITED.xlsx"
 DEFAULT_TREE = (
     ROOT
     / "source_data/3.phylogenetic_tree/1kp_trees/"
@@ -174,12 +174,13 @@ def wgm_ids_from_table2(path: Path) -> set[str]:
     return {row["WGD ID"] for row in read_xlsx_rows(path) if row.get("WGD ID")}
 
 
-def wgm_taxa_from_table3(path: Path) -> dict[str, set[str]]:
+def wgm_taxa_from_table3(path: Path, skipped_list_not_valid_wgms: list[str]) -> dict[str, set[str]]:
     """Build a mapping from WGM/WGD ID to supporting 1KP species codes.
 
     Supplementary Table 3 is organized by taxon. The columns ``WGD 1``, ``WGD 2``,
     and ``WGD 3`` describe the WGM/WGD history inferred for that taxon. Inverting
     those columns gives the taxon set used to place each event on the tree.
+    NOTE: Ignores ID "B2(possible WGD)" because it is not a Ks-derived WGM and is not listed in Table 2.
     """
     out: dict[str, set[str]] = defaultdict(set)
     for row in read_xlsx_rows(path):
@@ -188,6 +189,14 @@ def wgm_taxa_from_table3(path: Path) -> dict[str, set[str]]:
             continue
         for column in ("WGD 1", "WGD 2", "WGD 3"):
             for wgm_id in split_wgm_ids(row.get(column, "")):
+                # Catch edge cases that have to be manually curated
+                # 1. In Table 3, the "WGD2" column has cells with "B2(possible WGD)", which is actually 
+                # a MAPS-derived ID and not a Ks plots-derived ID. Therefore Table 2 (listing Ks-derived WGMs)
+                # does not list that WGM ID. Since we are only dealing with Ks-derived WGMs, we will skip that WGM ID.
+                if wgm_id == "B2(possible" or wgm_id == "WGD)":
+                    if wgm_id not in skipped_list_not_valid_wgms:
+                        skipped_list_not_valid_wgms.append(wgm_id)
+                    continue
                 out[wgm_id].add(code)
     return out
 
@@ -358,22 +367,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.out_tsv is not None:
         out_tsv = args.out_tsv
 
-    # Read the two evidence tables: Table 2 defines the valid event IDs, while
-    # Table 3 tells us which species codes support each event.
-    valid_wgms = wgm_ids_from_table2(args.wgm_table)
-    wgm_to_taxa = wgm_taxa_from_table3(args.ks_table)
-
     # ETE3 handles the real tree work: parsing Newick, finding leaves, and
     # calculating MRCAs. Node IDs are only for human review in the TSV.
     tree = Tree(str(args.tree), format=args.ete_format)
     assign_node_ids(tree)
     tree_tip_names = set(tree.get_leaf_names())
 
+    # Inizialize the audit table and bookkeeping for skipped events when listing WGM IDs
+    # that are not in Table 2 or have no MRCA in the tree.
     audit_rows: list[dict[str, object]] = []
     skipped = 0
     skipped_list_not_valid_wgms = []
     skipped_list_no_mrca = []
     annotated_node_ids: set[int] = set()
+
+    # Read the two evidence tables: Table 2 defines the valid event IDs, while
+    # Table 3 tells us which species codes support each event.
+    valid_wgms = wgm_ids_from_table2(args.wgm_table)
+    wgm_to_taxa = wgm_taxa_from_table3(args.ks_table, skipped_list_not_valid_wgms)
 
     # Place every WGM independently. If several WGMs map to one branch, each event
     # gets its own NHX key: WGM1=..., WGM2=..., etc.
@@ -421,10 +432,16 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Wrote audit table:    {out_tsv}")
     print(f"Table 2 WGM IDs:      {len(valid_wgms)}")
     print(f"Table 3 WGM IDs:      {len(wgm_to_taxa)}")
+
+    missing_valid_wgms = set(valid_wgms) - set(wgm_to_taxa)
+    if missing_valid_wgms != set():
+        print(f"Missing valid WGMs (Tab2 - Tab3): {missing_valid_wgms}")
+
     print(f"Annotated WGM IDs:    {len(audit_rows)}")
     print(f"Annotated nodes:      {len(annotated_node_ids)}")
+
     if skipped:
-        print(f"Skipped WGM IDs            :      {skipped}", file=sys.stderr)
+        print(f"Skipped WGM IDs:  {skipped}", file=sys.stderr)
         print(f"  Not in Table 2 (WGM list):     {skipped_list_not_valid_wgms}", file=sys.stderr)
         print(f"  No MRCAs found           :     {skipped_list_no_mrca}", file=sys.stderr)
     return 0
