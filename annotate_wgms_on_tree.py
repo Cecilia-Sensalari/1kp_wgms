@@ -19,9 +19,8 @@ Outputs:
 - an NHX-annotated Newick tree containing ``WGM1=...``, ``WGM2=...`` branch features
 - a TSV audit table explaining every placement and its support taxa
 
-ETE3 is used for all tree parsing, MRCA calculation, and tree writing. XLSX
-files are read directly with Python's standard library so that only the tree
-library needs to be installed.
+ETE3 is used for all tree parsing, MRCA calculation, and tree writing. The
+supplementary source tables are read from tab-separated text files.
 """
 
 from __future__ import annotations
@@ -30,11 +29,9 @@ import argparse
 import csv
 import re
 import sys
-import zipfile
 from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
-from xml.etree import ElementTree as ET
 
 try:
     from ete3 import Tree
@@ -47,8 +44,8 @@ except ImportError as exc:
 # Project defaults. Override these on the command line if running from another
 # checkout, another platform, or a test directory.
 ROOT = Path(r"/group/esb/cesen/1kp")
-DEFAULT_TABLE2 = ROOT / "source_data/1.species_dataset/1kp_paper_2019_suptab2_wgm_EDITED.xlsx"
-DEFAULT_TABLE3 = ROOT / "source_data/1.species_dataset/1kp_paper_2019_suptab3_ks_EDITED.xlsx"
+DEFAULT_TABLE2 = ROOT / "source_data/1.species_dataset/1kp_paper_2019_suptab2_wgm_EDITED.tsv"
+DEFAULT_TABLE3 = ROOT / "source_data/1.species_dataset/1kp_paper_2019_suptab3_ks_EDITED.tsv"
 DEFAULT_TREE = (
     ROOT
     / "source_data/3.phylogenetic_tree/1kp_trees/"
@@ -56,89 +53,24 @@ DEFAULT_TREE = (
 )
 
 
-# Namespace abbreviations used inside the XLSX XML files.
-XML_NS = {
-    "a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
-    "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
-}
-
-
 # ---------------------------------------------------------------------------
-# XLSX reading helpers
+# TSV reading helper
 # ---------------------------------------------------------------------------
-#
-# XLSX files are ZIP archives containing XML. The 1KP supplementary workbooks
-# are simple enough that we can read the first worksheet directly. This avoids
-# requiring pandas/openpyxl on top of ETE3.
 
 
-def column_index(cell_ref: str) -> int:
-    """Convert an Excel cell reference such as ``C42`` to a 1-based column.
+def read_tsv_rows(path: Path) -> list[dict[str, str]]:
+    """Read a UTF-8 TSV table as a list of row dictionaries.
 
-    Spreadsheet rows are sparse in the XML: blank cells may simply be omitted.
-    Converting ``A``, ``B``, ..., ``AA`` to numeric column indices lets us put
-    each value under the correct header even when intermediate cells are blank.
+    ``utf-8-sig`` also accepts files with a byte-order mark. Empty rows are
+    omitted, matching the behavior expected by the table interpretation code.
     """
-    match = re.match(r"[A-Z]+", cell_ref)
-    if match is None:
-        raise ValueError(f"Cannot parse Excel cell reference: {cell_ref}")
-
-    index = 0
-    for char in match.group(0):
-        index = index * 26 + (ord(char) - ord("A") + 1)
-    return index
-
-
-def cell_text(cell: ET.Element, shared_strings: list[str]) -> str:
-    """Return the displayed text for one XLSX worksheet cell.
-
-    Excel stores repeated strings in a shared string table and stores numbers
-    directly in the worksheet XML. This helper hides that difference so the rest
-    of the script can treat all cells as strings.
-    """
-    cell_type = cell.attrib.get("t")
-    if cell_type == "s":
-        value = cell.findtext("a:v", default="", namespaces=XML_NS)
-        return shared_strings[int(value)] if value != "" else ""
-    if cell_type == "inlineStr":
-        return "".join(cell.itertext()).strip()
-    return cell.findtext("a:v", default="", namespaces=XML_NS).strip()
-
-
-def read_xlsx_rows(path: Path, sheet_xml: str = "xl/worksheets/sheet1.xml") -> list[dict[str, str]]:
-    """Read a simple XLSX worksheet as a list of row dictionaries.
-
-    The first row is interpreted as the header. Every following non-empty row is
-    returned as ``{header: value}``, with blank cells represented by empty
-    strings. This is enough for the 1KP supplementary tables used here.
-    """
-    with zipfile.ZipFile(path) as zf:
-        shared_strings: list[str] = []
-        if "xl/sharedStrings.xml" in zf.namelist():
-            shared_root = ET.fromstring(zf.read("xl/sharedStrings.xml"))
-            for item in shared_root.findall("a:si", XML_NS):
-                shared_strings.append("".join(item.itertext()))
-
-        sheet = ET.fromstring(zf.read(sheet_xml))
-        raw_rows: list[dict[int, str]] = []
-        for row in sheet.findall(".//a:sheetData/a:row", XML_NS):
-            values: dict[int, str] = {}
-            for cell in row.findall("a:c", XML_NS):
-                ref = cell.attrib.get("r", "")
-                if ref:
-                    values[column_index(ref)] = cell_text(cell, shared_strings)
-            raw_rows.append(values)
-
-    if not raw_rows:
-        return []
-
-    headers = {index: value for index, value in raw_rows[0].items() if value}
-    rows: list[dict[str, str]] = []
-    for raw in raw_rows[1:]:
-        row = {header: raw.get(index, "") for index, header in headers.items()}
-        if any(value != "" for value in row.values()):
-            rows.append(row)
-    return rows
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        return [
+            {key: value or "" for key, value in row.items() if key is not None}
+            for row in reader
+            if any(value for value in row.values())
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +103,7 @@ def wgm_ids_from_table2(path: Path) -> set[str]:
     from Table 2 are skipped, because Table 2 is the paper's summary list of
     inferred WGMs/WGDs.
     """
-    return {row["WGD ID"] for row in read_xlsx_rows(path) if row.get("WGD ID")}
+    return {row["WGD ID"] for row in read_tsv_rows(path) if row.get("WGD ID")}
 
 
 def wgm_taxa_from_table3(path: Path, skipped_list_not_valid_wgms: list[str]) -> dict[str, set[str]]:
@@ -183,7 +115,7 @@ def wgm_taxa_from_table3(path: Path, skipped_list_not_valid_wgms: list[str]) -> 
     NOTE: Ignores ID "B2(possible WGD)" because it is not a Ks-derived WGM and is not listed in Table 2.
     """
     out: dict[str, set[str]] = defaultdict(set)
-    for row in read_xlsx_rows(path):
+    for row in read_tsv_rows(path):
         code = row.get("1KP Code", "").strip()
         if not code:
             continue
@@ -337,8 +269,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument("--tree", type=Path, default=DEFAULT_TREE, help="Rooted 1KP species tree in Newick format.")
-    parser.add_argument("--wgm-table", type=Path, default=DEFAULT_TABLE2, help="Supplementary Table 2 WGM/WGD list XLSX.")
-    parser.add_argument("--ks-table", type=Path, default=DEFAULT_TABLE3, help="Supplementary Table 3 Ks/WGD history XLSX.")
+    parser.add_argument("--wgm-table", type=Path, default=DEFAULT_TABLE2, help="Supplementary Table 2 WGM/WGD list TSV.")
+    parser.add_argument("--ks-table", type=Path, default=DEFAULT_TABLE3, help="Supplementary Table 3 Ks/WGD history TSV.")
     parser.add_argument("--out-tree", type=Path, default=None, help="Output NHX-annotated Newick tree.")
     parser.add_argument("--out-tsv", type=Path, default=None, help="Output placement audit TSV.")
     parser.add_argument(
