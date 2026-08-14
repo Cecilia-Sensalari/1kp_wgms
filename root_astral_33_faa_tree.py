@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Root the 1KP ASTRAL Newick tree with Chromista as outgroup.
+"""Root the 1KP ASTRAL Newick tree based on outgroup clade used in paper.
 
 [Generated via AI, tested by Cecilia]
 
@@ -24,7 +24,7 @@ OUTPUT_TREE = TREE_DIR / "astral_trees_33_percent-FAA_estimated_species_tree.roo
 
 # The 33 taxa classified as "Outgroup" in the 1KP paper's
 # supplementary table 1 listing the species (file 41586_2019_1693_MOESM3_ESM.xslx)
-CHROMISTA = [
+OUTGROUP = [
     # Others...
     "APTP", "ASZK", "BAJW", "BAKF", "BOGT", "DBYD", "EBWI", "FIDQ",
     "FIKG", "FOMH", "FSQE", "HFIK", "IAYV", "IRZA", "JCXF", "JGGD",
@@ -43,20 +43,20 @@ CHROMISTA = [
 # 1. Read the unrooted Newick tree.
 tree = Tree(INPUT_TREE.read_text().strip(), format=0)
 
-# 2. Find the node containing all Chromista taxa.
-chromista_node = tree.get_common_ancestor(*CHROMISTA)
+# 2. Find the node containing all Outgroup taxa.
+outgroup_node = tree.get_common_ancestor(*OUTGROUP)
 
-# Check that this node contains Chromista only.
-observed_chromista = set(chromista_node.get_leaf_names())
-if observed_chromista != set(CHROMISTA):
-    raise ValueError("The Chromista taxa do not form a single clade in this tree")
+# Check that this node contains the Outgroup clade only.
+observed_outgroup = set(outgroup_node.get_leaf_names())
+if observed_outgroup != set(OUTGROUP):
+    raise ValueError("The Outgroup taxa do not form a single clade in this tree")
 
-# 3. Place the root on the branch leading to the Chromista clade.
-tree.set_outgroup(chromista_node)
+# 3. Place the root on the branch leading to the Outgroup clade.
+tree.set_outgroup(outgroup_node)
 
-# Check that Chromista is now one of the two groups descending from the root.
+# Check that Outgroup  is now one of the two groups descending from the root.
 root_groups = [set(child.get_leaf_names()) for child in tree.children]
-if len(root_groups) != 2 or set(CHROMISTA) not in root_groups:
+if len(root_groups) != 2 or set(OUTGROUP) not in root_groups:
     raise RuntimeError("The tree was not rooted correctly")
 
 
