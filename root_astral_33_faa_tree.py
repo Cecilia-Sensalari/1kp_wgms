@@ -16,8 +16,8 @@ from ete3 import Tree
 
 
 # Input and output files
-PROJECT = Path(__file__).resolve().parents[1]
-TREE_DIR = PROJECT / "source_data/3.phylogenetic_tree/1kp_trees"
+ROOT = Path(r"/group/esb/cesen/1kp")
+TREE_DIR = ROOT / "source_data/3.phylogenetic_tree/1kp_trees"
 INPUT_TREE = TREE_DIR / "astral_trees_33_percent-FAA_estimated_species_tree.tree"
 OUTPUT_TREE = TREE_DIR / "astral_trees_33_percent-FAA_estimated_species_tree.rooted.tree"
 
@@ -25,13 +25,20 @@ OUTPUT_TREE = TREE_DIR / "astral_trees_33_percent-FAA_estimated_species_tree.roo
 # The 33 taxa classified as "Outgroup" in the 1KP paper's
 # supplementary table 1 listing the species (file 41586_2019_1693_MOESM3_ESM.xslx)
 CHROMISTA = [
+    # Others...
     "APTP", "ASZK", "BAJW", "BAKF", "BOGT", "DBYD", "EBWI", "FIDQ",
     "FIKG", "FOMH", "FSQE", "HFIK", "IAYV", "IRZA", "JCXF", "JGGD",
     "LDRY", "LIRF", "LLEN", "LXRN", "NMAK", "QLMZ", "RAPY", "RFAD",
     "ROZZ", "RWXW", "SRSQ", "ULXR", "VJED", "VKVG", "VRGZ", "VYER",
     "YRMA",
+    # Rhodophyta
+    "Cyame_v1.0", "LLXJ", "JJZR", "OBUY", "PVGP", "RTLC", "RSOF", "ZULJ",
+    "VZWX", "YSBD", "XAXW", "UYFR", "JEBK", "IHJY", "BWVJ", "IEHF", "CKXF",
+    "SBLT", "UGPM", "WEJN", "PYDB", "URSB", "ZJOJ", "IKIZ", "IKWM", "FTRP",
+    "PWKQ", "VNAL", "LJPN",
+    # Glaucophyta
+    "QFND", "JKHA", "PQED", "POOW"
 ]
-
 
 # 1. Read the unrooted Newick tree.
 tree = Tree(INPUT_TREE.read_text().strip(), format=0)
