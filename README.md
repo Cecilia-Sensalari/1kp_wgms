@@ -6,7 +6,7 @@ WGM inference in One Thousand Plant (1KP) transcriptomes using rate-adjusted Ks 
 
 `annotate_wgms_on_tree.py` reconstructs a practical WGM/WGD annotation for the rooted 1KP ASTRAL species tree. The 1KP/Barker data release provides the WGM summary table and the figure PDF, but not an author-supplied Newick file with all WGM labels already attached to branches. This script therefore infers branch placements from the supplementary evidence tables.
 
-The current implementation uses ETE3 for tree parsing, MRCA calculation, and NHX tree writing. The supplementary `.xlsx` files are read directly with the Python standard library, so the only non-stdlib dependency is ETE3.
+The current implementation uses ETE3 for tree parsing, MRCA calculation, and NHX tree writing.
 
 ## Dependency
 
@@ -20,10 +20,10 @@ pip install ete3
 
 By default, the script uses these files in this project:
 
-- `source_data/1.species_dataset/1kp_paper_2019_suptab2_wgm.xlsx`
+- `source_data/1.species_dataset/1kp_paper_2019_suptab2_wgm.tsv`
   - Supplementary Table 2.
   - Defines the official WGM/WGD IDs to annotate.
-- `source_data/1.species_dataset/1kp_paper_2019_suptab3_ks.xlsx`
+- `source_data/1.species_dataset/1kp_paper_2019_suptab3_ks.tsv`
   - Supplementary Table 3.
   - Lists the WGM/WGD history for each 1KP species code in columns `WGD 1`, `WGD 2`, and `WGD 3`.
 - `source_data/3.phylogenetic_tree/1kp_trees/astral_trees_33_percent-FAA_estimated_species_tree.rooted.tree`
@@ -76,8 +76,8 @@ Specify custom inputs or outputs:
 ```bash
 python code/1kp_wgms/annotate_wgms_on_tree.py \
   --tree source_data/3.phylogenetic_tree/1kp_trees/astral_trees_33_percent-FAA_estimated_species_tree.rooted.tree \
-  --wgm-table source_data/1.species_dataset/1kp_paper_2019_suptab2_wgm.xlsx \
-  --ks-table source_data/1.species_dataset/1kp_paper_2019_suptab3_ks.xlsx \
+  --wgm-table source_data/1.species_dataset/1kp_paper_2019_suptab2_wgm.tsv \
+  --ks-table source_data/1.species_dataset/1kp_paper_2019_suptab3_ks.tsv \
   --out-tree source_data/3.phylogenetic_tree/1kp_trees/1kp_wgm_annotated.nhx.tree \
   --out-tsv source_data/3.phylogenetic_tree/1kp_trees/1kp_wgm_placements.tsv
 ```
