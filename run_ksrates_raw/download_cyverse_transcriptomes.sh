@@ -30,7 +30,7 @@ selection=${2:-unfiltered}
 output_dir=${3:-/group/esb/cesen/1kp/source_data/2.transcriptomes/1kp}
 base_url=https://de.cyverse.org/anon-files/iplant/home/shared/commons_repo/curated/oneKP_capstone_2019/transcript_assemblies
 resolver_url=https://web.corral.tacc.utexas.edu/OneKP/
-remote_index_file="$output_dir/onekp_cyverse_directory_index.txt"
+remote_index_file="/group/esb/cesen/1kp/code/1kp_wgms/run_ksrates_raw/onekp_cyverse_directory_index.txt"
 missing_log_file="$output_dir/missing_transcriptomes.tsv"
 keep_dup_reports=${KEEP_DUP_REPORTS:-false}
 
