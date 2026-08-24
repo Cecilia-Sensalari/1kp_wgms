@@ -47,7 +47,7 @@ TREE_FILE = SOURCE_DATA_DIR / (
 )
 SPECIES_TABLE = SOURCE_DATA_DIR / "1.species_dataset/1kp_paper_2019_suptab1_species.tsv"
 # - Output directories for transcriptomes
-TRANSCRIPTOME_OUTPUT_DIR = SOURCE_DATA_DIR / "2.transcriptomes"
+TRANSCRIPTOME_OUTPUT_DIR = SOURCE_DATA_DIR / "2.transcriptomes" / "1kp"
 
 # Location paralog Ks analysis
 KSRATES_RAW_DIR = PROJECT_ROOT / "ks_analysis/1kp/ksrates_raw"
