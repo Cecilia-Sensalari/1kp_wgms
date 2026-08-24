@@ -15,10 +15,10 @@ By default, transcriptomes are downloaded into this raw ksrates analysis area:
 
 
 Regenerate configs/lists only
-    python3 /group/esb/cesen/1kp/code/1kp_wgms/run_ksrates_raw/run_paralog_batches.py --skip-download
+    python3 run_paralog_batches.py --skip-download
 
 Download/process only batch 1
-    python3 /group/esb/cesen/1kp/code/1kp_wgms/run_ksrates_raw/run_paralog_batches.py --start-batch 1 --end-batch 1
+    python3 run_paralog_batches.py --start-batch 1 --end-batch 1
 
 Later, from ksrates_raw, run one batch config
     cd /group/esb/cesen/1kp/ks_analysis/1kp/ksrates_raw
