@@ -7,7 +7,7 @@
 # Usage:
 #   bash download_cyverse_transcriptomes.sh SPECIES_LIST [both|unfiltered|filtered] [OUTPUT_DIR]
 #
-# SPECIES_LIST contains one CyVerse directory name per line, for example:
+# SPECIES_LIST contains one 1KP sample ID followed by a name per line. For example:
 #   ACSA-Species_name_rest
 #
 # The data type defaults to "unfiltered". OUTPUT_DIR defaults to the 1KP
@@ -29,10 +29,11 @@ species_list=$1
 selection=${2:-unfiltered}
 output_dir=${3:-/group/esb/cesen/1kp/source_data/2.transcriptomes/1kp}
 base_url=https://de.cyverse.org/anon-files/iplant/home/shared/commons_repo/curated/oneKP_capstone_2019/transcript_assemblies
-resolver_url=https://web.corral.tacc.utexas.edu/OneKP/
-remote_index_file="/group/esb/cesen/1kp/code/1kp_wgms/run_ksrates_raw/onekp_cyverse_directory_index.txt"
+resolver_url=https://datacommons.cyverse.org/api/list/iplant/home/shared/commons_repo/curated/oneKP_capstone_2019/transcript_assemblies
+remote_index_file=$(mktemp "${TMPDIR:-/tmp}/onekp_cyverse_directory_index.XXXXXX")
 missing_log_file="$output_dir/missing_transcriptomes.tsv"
 keep_dup_reports=${KEEP_DUP_REPORTS:-false}
+trap 'rm -f "$remote_index_file"' EXIT
 
 if [[ ! -f $species_list ]]; then
     echo "Species list does not exist: $species_list" >&2
@@ -144,47 +145,72 @@ download_archive() {
     fi
 }
 
-# Build a local cache of public OneKP directory names. The CyVerse directory
-# names are not always exactly CODE + species name, for example:
+# Build a temporary list of public OneKP directory names from the current
+# CyVerse DataCommons API. The CyVerse directory names are not always exactly
+# CODE + species name, for example:
 #   QFND-Cyanophora_paradoxa-CCAC_0074
-# This index lets us resolve a CODE or CODE-species hint to the exact remote
-# directory while keeping predictable local output filenames.
+# This lets us resolve the exact remote directory from the 1KP sample ID while
+# keeping predictable local output filenames based on the species-list entry.
 ensure_remote_index() {
-    local tmp_index="${remote_index_file}.tmp"
-
-    if [[ -s $remote_index_file ]] && ! grep -q '"' "$remote_index_file"; then
+    if [[ -s $remote_index_file ]]; then
         return 0
     fi
 
     echo "Resolving CyVerse directory names from $resolver_url" >&2
-    mkdir -p "$(dirname "$remote_index_file")"
-    rm -f "$tmp_index"
+    rm -f "$remote_index_file"
 
-    if ! wget -q -O - "$resolver_url" \
-        | grep -o 'href="[^"]*/"' \
-        | sed 's/^href="//; s#/"$##' \
-        | grep -E '^[A-Za-z0-9_.]+-' > "$tmp_index"; then
-        rm -f "$tmp_index"
+    if ! python3 - "$resolver_url" "$remote_index_file" <<'PY'; then
+import json
+import re
+import sys
+import urllib.parse
+import urllib.request
+
+resolver_url = sys.argv[1]
+remote_index_file = sys.argv[2]
+labels = []
+page = 0
+
+while True:
+    query = urllib.parse.urlencode({"page": page, "sort-col": "NAME", "sort-dir": "asc"})
+    with urllib.request.urlopen(f"{resolver_url}?{query}") as response:
+        payload = json.load(response)
+
+    folders = payload.get("folders", [])
+    labels.extend(
+        item["label"]
+        for item in folders
+        if re.match(r"^[A-Za-z0-9_.]+-", item.get("label", ""))
+    )
+
+    total = int(payload.get("total", 0))
+    page += 1
+    if not folders or page * 100 >= total:
+        break
+
+with open(remote_index_file, "w", encoding="utf-8") as handle:
+    handle.write("\n".join(labels))
+    handle.write("\n")
+PY
+        rm -f "$remote_index_file"
         echo "Could not download or parse OneKP directory index from $resolver_url" >&2
         return 1
     fi
 
-    if [[ ! -s $tmp_index ]]; then
-        rm -f "$tmp_index"
+    if [[ ! -s $remote_index_file ]]; then
+        rm -f "$remote_index_file"
         echo "OneKP directory index from $resolver_url was empty" >&2
         return 1
     fi
-
-    mv "$tmp_index" "$remote_index_file"
 }
 
 resolve_remote_cyverse_name() {
     local requested_name=$1
     local code=$2
-    local -a matches prefix_matches
+    local -a matches
 
     if ! ensure_remote_index; then
-        echo "  Could not resolve exact remote directory; trying requested name [$requested_name]" >&2
+        echo "  Could not resolve remote directory from [$code-]; trying requested name [$requested_name]" >&2
         echo "$requested_name"
         return 0
     fi
@@ -192,22 +218,8 @@ resolve_remote_cyverse_name() {
     mapfile -t matches < <(awk -v code="$code" 'index($0, code "-") == 1 {print}' "$remote_index_file")
 
     if (( ${#matches[@]} == 0 )); then
-        echo "  No remote directory starts with [$code-]; trying requested name [$requested_name]" >&2
-        echo "$requested_name"
-        return 0
-    fi
-
-    for match in "${matches[@]}"; do
-        if [[ $match == "$requested_name" ]]; then
-            echo "$match"
-            return 0
-        fi
-    done
-
-    mapfile -t prefix_matches < <(printf '%s\n' "${matches[@]}" | awk -v requested="$requested_name" '$0 == requested || index($0, requested "-") == 1 {print}')
-    if (( ${#prefix_matches[@]} == 1 )); then
-        echo "${prefix_matches[0]}"
-        return 0
+        echo "  No remote directory starts with [$code-]; skipping [$requested_name]" >&2
+        return 1
     fi
 
     if (( ${#matches[@]} == 1 )); then
@@ -215,9 +227,9 @@ resolve_remote_cyverse_name() {
         return 0
     fi
 
-    echo "  Multiple remote directories match [$code]; choosing first: ${matches[0]}" >&2
+    echo "  Multiple remote directories match [$code]; skipping [$requested_name]" >&2
     printf '    %s\n' "${matches[@]}" >&2
-    echo "${matches[0]}"
+    return 1
 }
 
 # Process one species and one data type. Keeping these operations in a function
@@ -379,19 +391,30 @@ while IFS= read -r onekp_cyverse_name || [[ -n $onekp_cyverse_name ]]; do
     onekp_cyverse_name=${onekp_cyverse_name%$'\r'}
     [[ -z $onekp_cyverse_name || $onekp_cyverse_name == \#* ]] && continue
 
-    if [[ $onekp_cyverse_name != *-* ]]; then
-        echo "Invalid species entry (expected CODE-Species_name): $onekp_cyverse_name" >&2
-        exit 1
+    if [[ $onekp_cyverse_name == *-* ]]; then
+        # Split "CODE-Species_name" at the first hyphen. Only CODE is used for
+        # remote CyVerse lookup; the full input line is kept for local filenames.
+        onekp_code=${onekp_cyverse_name%%-*}
+        species_name=${onekp_cyverse_name#*-}
+    else
+        onekp_code=$onekp_cyverse_name
+        species_name=
     fi
-
-    # Split "CODE-Species_name" at the first hyphen.
-    onekp_code=${onekp_cyverse_name%%-*}
-    species_name=${onekp_cyverse_name#*-}
-    resolved_cyverse_name=$(resolve_remote_cyverse_name "$onekp_cyverse_name" "$onekp_code")
 
     echo "$onekp_cyverse_name"
     echo "  - code: $onekp_code"
-    echo "  - species: $species_name"
+    if [[ -n $species_name ]]; then
+        echo "  - species: $species_name"
+    fi
+
+    if ! resolved_cyverse_name=$(resolve_remote_cyverse_name "$onekp_cyverse_name" "$onekp_code"); then
+        echo "  - remote directory: unresolved"
+        for data_type in "${data_types[@]}"; do
+            log_missing_transcriptome "$onekp_cyverse_name" "" "$onekp_code" "$data_type" "no_unique_remote_directory" "$resolver_url"
+        done
+        continue
+    fi
+
     echo "  - remote directory: $resolved_cyverse_name"
 
     # This loop runs once for a single selection or twice when "both" was used.
