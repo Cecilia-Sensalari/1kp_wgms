@@ -1,25 +1,25 @@
-#!/usr/bin/env bash
-
-# Download, extract, merge, and deduplicate 1KP transcriptomes from CyVerse.
+# Download, extract, merge, and deduplicate 1KP transcriptomes.
 #
 # [Generated via AI, tested by Cecilia]
 #
 # Usage:
-#   bash download_cyverse_transcriptomes.sh SPECIES_LIST [both|unfiltered|filtered] [OUTPUT_DIR]
+#   bash download_cyverse_transcriptomes.sh SPECIES_LIST [both|unfiltered|filtered] [OUTPUT_DIR] [gdrive|cyverse]
 #
 # SPECIES_LIST contains one 1KP sample ID followed by a name per line. For example:
 #   ACSA-Species_name_rest
 #
 # The data type defaults to "unfiltered". OUTPUT_DIR defaults to the 1KP
-# transcriptome source-data directory. Deduplication requires seqkit.
+# transcriptome source-data directory. SOURCE defaults to "gdrive".
+# Deduplication requires seqkit. Google Drive downloads require the Python
+# package gdown.
 
 # Stop when a command fails, an undefined variable is used, or a pipeline fails.
 set -euo pipefail
 
-# Check that the required species list and no more than two optional arguments
+# Check that the required species list and no more than three optional arguments
 # were supplied.
-if (( $# < 1 || $# > 3 )); then
-    echo "Usage: $0 SPECIES_LIST [both|unfiltered|filtered] [OUTPUT_DIR]" >&2
+if (( $# < 1 || $# > 4 )); then
+    echo "Usage: $0 SPECIES_LIST [both|unfiltered|filtered] [OUTPUT_DIR] [gdrive|cyverse]" >&2
     exit 1
 fi
 
@@ -28,12 +28,29 @@ fi
 species_list=$1
 selection=${2:-unfiltered}
 output_dir=${3:-/group/esb/cesen/1kp/source_data/2.transcriptomes/1kp}
-base_url=https://de.cyverse.org/anon-files/iplant/home/shared/commons_repo/curated/oneKP_capstone_2019/transcript_assemblies
-resolver_url=https://datacommons.cyverse.org/api/list/iplant/home/shared/commons_repo/curated/oneKP_capstone_2019/transcript_assemblies
+download_source=${4:-gdrive}
+cyverse_base_url=https://de.cyverse.org/anon-files/iplant/home/shared/commons_repo/curated/oneKP_capstone_2019/transcript_assemblies
+cyverse_resolver_url=https://datacommons.cyverse.org/api/list/iplant/home/shared/commons_repo/curated/oneKP_capstone_2019/transcript_assemblies
+gdrive_folder_id=18AOvneP_1l5uzE7tVWPKVR9MAkhrtA2N
+gdrive_folder_url="https://drive.google.com/drive/folders/$gdrive_folder_id"
 remote_index_file=$(mktemp "${TMPDIR:-/tmp}/onekp_cyverse_directory_index.XXXXXX")
-missing_log_file="$output_dir/missing_transcriptomes.tsv"
 keep_dup_reports=${KEEP_DUP_REPORTS:-false}
 trap 'rm -f "$remote_index_file"' EXIT
+
+if [[ $output_dir == gdrive || $output_dir == cyverse ]]; then
+    download_source=$output_dir
+    output_dir=/group/esb/cesen/1kp/source_data/2.transcriptomes/1kp
+fi
+
+missing_log_file="$output_dir/missing_transcriptomes.tsv"
+
+case $download_source in
+    gdrive|cyverse) ;;
+    *)
+        echo "Invalid download source '$download_source'; use gdrive or cyverse." >&2
+        exit 1
+        ;;
+esac
 
 if [[ ! -f $species_list ]]; then
     echo "Species list does not exist: $species_list" >&2
@@ -145,21 +162,131 @@ download_archive() {
     fi
 }
 
-# Build a temporary list of public OneKP directory names from the current
-# CyVerse DataCommons API. The CyVerse directory names are not always exactly
-# CODE + species name, for example:
+download_gdrive_archive() {
+    local remote_name_dir=$1
+    local remote_name=$2
+    local archive=$3
+    local tmp_archive="${archive}.tmp"
+    local remote_dir_id
+
+    remote_dir_id=$(awk -F '\t' -v dir="$remote_name_dir" '$1 == dir {print $2; exit}' "$remote_index_file")
+    if [[ -z $remote_dir_id ]]; then
+        echo "Google Drive directory ID not found for $remote_name_dir" >&2
+        return 1
+    fi
+
+    rm -f "$tmp_archive"
+    if ! python3 - "$remote_name_dir" "$remote_name" "$remote_dir_id" "$tmp_archive" <<'PY'; then
+from html.parser import HTMLParser
+import html
+import re
+import sys
+import urllib.parse
+
+import requests
+
+remote_name_dir = sys.argv[1]
+remote_name = sys.argv[2]
+remote_dir_id = sys.argv[3]
+tmp_archive = sys.argv[4]
+
+try:
+    import gdown
+except Exception as exc:
+    raise SystemExit(
+        "Python package gdown is required for Google Drive downloads. "
+        "Install it or rerun with source 'cyverse'. "
+        f"Import error: {exc}"
+    )
+
+class LinkParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.links = []
+        self._href = None
+        self._text = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            self._href = dict(attrs).get("href", "")
+            self._text = []
+
+    def handle_data(self, data):
+        if self._href is not None:
+            self._text.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._href is not None:
+            name = html.unescape("".join(self._text)).strip()
+            self.links.append((self._href, name))
+            self._href = None
+            self._text = []
+
+def embedded_folder_links(folder_id):
+    query = urllib.parse.urlencode({"id": folder_id})
+    response = requests.get(
+        f"https://drive.google.com/embeddedfolderview?{query}",
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=60,
+    )
+    response.raise_for_status()
+    text = response.text
+    parser = LinkParser()
+    parser.feed(text)
+    return parser.links
+
+matches = []
+for href, name in embedded_folder_links(remote_dir_id):
+    file_match = re.match(r"https://drive\.google\.com/file/d/([-\w]{25,})/view", href)
+    if file_match and name == remote_name:
+        matches.append(file_match.group(1))
+
+if len(matches) != 1:
+    raise SystemExit(f"Expected one Google Drive file named {remote_name} in {remote_name_dir}, found {len(matches)}")
+
+gdown.download(id=matches[0], output=tmp_archive, quiet=False, use_cookies=False)
+PY
+        rm -f "$tmp_archive"
+        echo "Google Drive archive download failed: $remote_name_dir/$remote_name" >&2
+        return 1
+    fi
+
+    if archive_is_valid "$tmp_archive"; then
+        mv "$tmp_archive" "$archive"
+    else
+        rm -f "$tmp_archive"
+        echo "Downloaded Google Drive archive failed integrity check: $remote_name_dir/$remote_name" >&2
+        return 1
+    fi
+}
+
+download_remote_archive() {
+    local archive_locator=$1
+    local archive=$2
+    local remote_name_dir=$3
+    local remote_name=$4
+
+    case $download_source in
+        gdrive) download_gdrive_archive "$remote_name_dir" "$remote_name" "$archive" ;;
+        cyverse) download_archive "$archive_locator" "$archive" ;;
+    esac
+}
+
+# Build a temporary list of public OneKP directory names from the selected
+# source. The remote directory names are not always exactly CODE + species name,
+# for example:
 #   QFND-Cyanophora_paradoxa-CCAC_0074
 # This lets us resolve the exact remote directory from the 1KP sample ID while
 # keeping predictable local output filenames based on the species-list entry.
-ensure_remote_index() {
+ensure_cyverse_remote_index() {
     if [[ -s $remote_index_file ]]; then
         return 0
     fi
 
-    echo "Resolving CyVerse directory names from $resolver_url" >&2
+    echo "Resolving CyVerse directory names from $cyverse_resolver_url" >&2
     rm -f "$remote_index_file"
 
-    if ! python3 - "$resolver_url" "$remote_index_file" <<'PY'; then
+    if ! python3 - "$cyverse_resolver_url" "$remote_index_file" <<'PY'; then
 import json
 import re
 import sys
@@ -189,33 +316,116 @@ while True:
         break
 
 with open(remote_index_file, "w", encoding="utf-8") as handle:
-    handle.write("\n".join(labels))
+    handle.write("\n".join(f"{label}\t" for label in labels))
     handle.write("\n")
 PY
         rm -f "$remote_index_file"
-        echo "Could not download or parse OneKP directory index from $resolver_url" >&2
+        echo "Could not download or parse OneKP directory index from $cyverse_resolver_url" >&2
         return 1
     fi
 
     if [[ ! -s $remote_index_file ]]; then
         rm -f "$remote_index_file"
-        echo "OneKP directory index from $resolver_url was empty" >&2
+        echo "OneKP directory index from $cyverse_resolver_url was empty" >&2
         return 1
     fi
 }
 
-resolve_remote_cyverse_name() {
+ensure_gdrive_remote_index() {
+    if [[ -s $remote_index_file ]]; then
+        return 0
+    fi
+
+    echo "Resolving Google Drive directory names from $gdrive_folder_url" >&2
+    rm -f "$remote_index_file"
+
+    if ! python3 - "$gdrive_folder_id" "$remote_index_file" <<'PY'; then
+from html.parser import HTMLParser
+import html
+import re
+import sys
+import urllib.parse
+
+import requests
+
+folder_id = sys.argv[1]
+remote_index_file = sys.argv[2]
+
+class LinkParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.links = []
+        self._href = None
+        self._text = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            self._href = dict(attrs).get("href", "")
+            self._text = []
+
+    def handle_data(self, data):
+        if self._href is not None:
+            self._text.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._href is not None:
+            name = html.unescape("".join(self._text)).strip()
+            self.links.append((self._href, name))
+            self._href = None
+            self._text = []
+
+query = urllib.parse.urlencode({"id": folder_id})
+response = requests.get(
+    f"https://drive.google.com/embeddedfolderview?{query}",
+    headers={"User-Agent": "Mozilla/5.0"},
+    timeout=60,
+)
+response.raise_for_status()
+text = response.text
+
+parser = LinkParser()
+parser.feed(text)
+
+rows = []
+for href, name in parser.links:
+    folder_match = re.match(r"https://drive\.google\.com/drive/folders/([-\w]{25,})", href)
+    if folder_match and name and re.match(r"^[A-Za-z0-9_.]+-", name):
+        rows.append((name, folder_match.group(1)))
+
+with open(remote_index_file, "w", encoding="utf-8") as handle:
+    for directory_name, directory_id in rows:
+        handle.write(f"{directory_name}\t{directory_id}\n")
+PY
+        rm -f "$remote_index_file"
+        echo "Could not download or parse Google Drive directory index from $gdrive_folder_url" >&2
+        return 1
+    fi
+
+    if [[ ! -s $remote_index_file ]]; then
+        rm -f "$remote_index_file"
+        echo "Google Drive directory index from $gdrive_folder_url was empty" >&2
+        return 1
+    fi
+}
+
+ensure_remote_index() {
+    case $download_source in
+        gdrive) ensure_gdrive_remote_index ;;
+        cyverse) ensure_cyverse_remote_index ;;
+    esac
+}
+
+resolve_remote_name() {
     local requested_name=$1
     local code=$2
     local -a matches
 
     if ! ensure_remote_index; then
-        echo "  Could not resolve remote directory from [$code-]; trying requested name [$requested_name]" >&2
-        echo "$requested_name"
-        return 0
+        echo "  Could not resolve remote directory from [$code-]; skipping [$requested_name]" >&2
+        return 1
     fi
 
-    mapfile -t matches < <(awk -v code="$code" 'index($0, code "-") == 1 {print}' "$remote_index_file")
+    mapfile -t matches < <(awk -F '\t' -v code="$code" 'index($1, code "-") == 1 && !seen[$1]++ {print $1}' "$remote_index_file")
 
     if (( ${#matches[@]} == 0 )); then
         echo "  No remote directory starts with [$code-]; skipping [$requested_name]" >&2
@@ -242,7 +452,7 @@ process_transcriptome() {
     local remote_name archive extract_dir fna_dir merged_file deduplicated_file
     local duplicate_output_dir processed_output_dir
     local duplicate_sequences_file duplicate_ids_file
-    local archive_url
+    local archive_locator
     local -a fna_files
 
     # CyVerse uses different archive names for the two data types. Local files
@@ -290,7 +500,12 @@ process_transcriptome() {
 
     # Download only when the renamed local archive is not already available.
     # If a previous partial/corrupt archive is found, remove and redownload it.
-    archive_url="$base_url/$remote_name_dir/$remote_name"
+    if [[ $download_source == gdrive ]]; then
+        archive_locator="gdrive://$remote_name_dir/$remote_name"
+    else
+        archive_locator="$cyverse_base_url/$remote_name_dir/$remote_name"
+    fi
+
     downloaded_archive=false
     if [[ -f $archive ]]; then
         if archive_is_valid "$archive"; then
@@ -300,8 +515,8 @@ process_transcriptome() {
             rm -f "$archive"
             rm -rf "$extract_dir"
             rm -f "$merged_file"
-            if ! download_archive "$archive_url" "$archive"; then
-                log_missing_transcriptome "$local_name" "$remote_name_dir" "$code" "$data_type" "archive_download_or_integrity_failed" "$archive_url"
+            if ! download_remote_archive "$archive_locator" "$archive" "$remote_name_dir" "$remote_name"; then
+                log_missing_transcriptome "$local_name" "$remote_name_dir" "$code" "$data_type" "archive_download_or_integrity_failed" "$archive_locator"
                 echo "  [$data_type] Logged missing/invalid archive and skipped." >&2
                 return 0
             fi
@@ -309,8 +524,8 @@ process_transcriptome() {
         fi
     else
         echo "  [$data_type] Downloading $remote_name"
-        if ! download_archive "$archive_url" "$archive"; then
-            log_missing_transcriptome "$local_name" "$remote_name_dir" "$code" "$data_type" "archive_download_or_integrity_failed" "$archive_url"
+        if ! download_remote_archive "$archive_locator" "$archive" "$remote_name_dir" "$remote_name"; then
+            log_missing_transcriptome "$local_name" "$remote_name_dir" "$code" "$data_type" "archive_download_or_integrity_failed" "$archive_locator"
             echo "  [$data_type] Logged missing/invalid archive and skipped." >&2
             return 0
         fi
@@ -335,7 +550,7 @@ process_transcriptome() {
         echo "  [$data_type] Extracting archive"
         mkdir -p "$extract_dir"
         if ! tar -xjf "$archive" -C "$extract_dir"; then
-            log_missing_transcriptome "$local_name" "$remote_name_dir" "$code" "$data_type" "archive_extraction_failed" "$archive_url"
+            log_missing_transcriptome "$local_name" "$remote_name_dir" "$code" "$data_type" "archive_extraction_failed" "$archive_locator"
             echo "  [$data_type] Logged extraction failure and skipped." >&2
             rm -rf "$extract_dir"
             rm -f "$merged_file"
@@ -353,7 +568,7 @@ process_transcriptome() {
         echo "  [$data_type] Merged file exists; skipping merge."
     elif (( ${#fna_files[@]} == 0 )); then
         echo "  [$data_type] No extracted .FNA files found in $fna_dir" >&2
-        log_missing_transcriptome "$local_name" "$remote_name_dir" "$code" "$data_type" "no_extracted_fna_files" "$archive_url"
+        log_missing_transcriptome "$local_name" "$remote_name_dir" "$code" "$data_type" "no_extracted_fna_files" "$archive_locator"
         echo "  [$data_type] Logged missing FNA files and skipped." >&2
         return 0
     else
@@ -402,15 +617,16 @@ while IFS= read -r onekp_cyverse_name || [[ -n $onekp_cyverse_name ]]; do
     fi
 
     echo "$onekp_cyverse_name"
+    echo "  - source: $download_source"
     echo "  - code: $onekp_code"
     if [[ -n $species_name ]]; then
         echo "  - species: $species_name"
     fi
 
-    if ! resolved_cyverse_name=$(resolve_remote_cyverse_name "$onekp_cyverse_name" "$onekp_code"); then
+    if ! resolved_cyverse_name=$(resolve_remote_name "$onekp_cyverse_name" "$onekp_code"); then
         echo "  - remote directory: unresolved"
         for data_type in "${data_types[@]}"; do
-            log_missing_transcriptome "$onekp_cyverse_name" "" "$onekp_code" "$data_type" "no_unique_remote_directory" "$resolver_url"
+            log_missing_transcriptome "$onekp_cyverse_name" "" "$onekp_code" "$data_type" "no_unique_remote_directory" "$download_source"
         done
         continue
     fi

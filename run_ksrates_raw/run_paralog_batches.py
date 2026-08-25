@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Prepare and optionally run 1KP paralog Ks batch inputs for ksrates.
 
 The script splits the 1KP species tree into adjacent leaf batches, writes one
@@ -280,13 +279,14 @@ def write_species_list(path: Path, batch_species: list[str], species_by_id: dict
     return names
 
 
-def run_downloader(download_script: Path, species_list: Path, selection: str, output_dir: Path) -> None:
+def run_downloader(download_script: Path, species_list: Path, selection: str, output_dir: Path, source: str) -> None:
     command = [
         "bash",
         str(download_script),
         str(species_list),
         selection,
         str(output_dir),
+        source,
     ]
     subprocess.run(command, check=True)
 
@@ -300,6 +300,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--transcriptome-output-dir", type=Path, default=TRANSCRIPTOME_OUTPUT_DIR)
     parser.add_argument("--batch-size", type=int, default=20)
     parser.add_argument("--download-selection", choices=["unfiltered", "filtered", "both"], default="unfiltered")
+    parser.add_argument("--download-source", choices=["gdrive", "cyverse"], default="gdrive")
     parser.add_argument("--config-fasta-selection", choices=["unfiltered", "filtered"], default="unfiltered")
     parser.add_argument("--start-batch", type=int, default=1, help="First 1-based batch to process")
     parser.add_argument("--end-batch", type=int, default=None, help="Last 1-based batch to process")
@@ -359,7 +360,13 @@ def main() -> None:
         )
 
         if args.start_batch <= batch_id <= end_batch and not args.skip_download:
-            run_downloader(args.download_script, species_list_path, args.download_selection, args.transcriptome_output_dir)
+            run_downloader(
+                args.download_script,
+                species_list_path,
+                args.download_selection,
+                args.transcriptome_output_dir,
+                args.download_source,
+            )
 
         fasta_paths = [
             str(processed_fasta_path(name, args.transcriptome_output_dir, args.config_fasta_selection))
@@ -390,6 +397,7 @@ def main() -> None:
     print(f"Config/species-list batches written: {num_batches}")
     print(f"Config directory: {args.config_dir}")
     print(f"Manifest: {manifest_path}")
+    print(f"Download source: {args.download_source}")
     if args.skip_download:
         print("Download step: skipped")
     else:
