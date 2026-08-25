@@ -249,6 +249,10 @@ def rows_for_tree(
         for label in ["A", *older_labels]:
             selected.extend(groups.get(label, []))
         selected = sorted(dict.fromkeys(selected), key=order.get)
+        focal_species = []
+        for label in ["A", "B", "C"]:
+            focal_species.extend(groups.get(label, []))
+        focal_species = sorted(dict.fromkeys(focal_species), key=order.get)
 
         if len(selected) < args.min_species:
             continue
@@ -256,7 +260,7 @@ def rows_for_tree(
         yield [
             branch_id(node, branch_index),
             pruned_newick(tree, selected),
-            ",".join(selected),
+            ",".join(focal_species),
             ",".join(selected),
             ",".join(groups["A"]),
             ",".join(groups.get("B", [])),

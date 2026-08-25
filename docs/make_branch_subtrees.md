@@ -28,6 +28,12 @@ For `A`, the rule is based on the two child subclades below the test node:
 - three descendant leaves: keep all three, split as `1 + 2` across the two child subclades;
 - larger clades: keep up to two species from each child subclade.
 
+When `A` is an internal node, its two child subclades can be thought of as
+`A'` and `A''`. If `A_species` contains three or four leaves, those leaves are
+not just the best three or four species anywhere below `A`; they are sampled
+from both `A'` and `A''` so that the descendant side of the test branch remains
+phylogenetically balanced.
+
 When there are more candidate leaves than slots, representatives are chosen by
 phylogenetic balance first, then by transcriptome quality.
 
@@ -36,7 +42,7 @@ phylogenetic balance first, then by transcriptome quality.
 The script reads the 1KP species table:
 
 ```text
-/group/esb/cesen/1kp/source_data/1.species_dataset/1kp_paper_2019_suptab1_species.tsv
+/path/to/1kp/source_data/1.species_dataset/1kp_paper_2019_suptab1_species.tsv
 ```
 
 and scores transcriptomes as:
@@ -52,19 +58,31 @@ subclade.
 
 - `branch_id`: traversal number plus either the leaf 1KP ID or `internal`, e.g. `000651_JKAA` or `000650_internal`.
 - `newick_tree`: pruned Newick tree containing only the selected species.
-- `focal_species`: currently all selected species, for downstream ksrates config generation.
-- `target_species`: currently all selected species.
+- `focal_species`: species that should be treated as focal species by downstream `ksrates` setup.
+  This is `A_species + B_species + C_species`.
+- `target_species`: all selected species in the subtree, including `D_species`.
 - `A_species`, `B_species`, `C_species`, `D_species`: selected representatives by local clade.
 - `n_selected_species`: total number of species retained in the row.
 
 The largest expected subtree has ten species: four from `A` and two each from
 `B`, `C`, and `D`.
 
+## Focal Species Logic
+
+Only `A`, `B`, and `C` representatives are focal species by default:
+
+- `A_species`: expected to share a putative WGM on the tested branch.
+- `B_species`: closest species expected not to share that WGM.
+- `C_species`: older negative comparison, used to confirm the signal outside `A`.
+
+`D_species` is kept in the subtree as older context for correction/outgroup
+choice, but is not treated as focal by default.
+
 ## Run
 
 ```bash
 python3 code/1kp_wgms/run_ksrates_raw/make_branch_subtrees.py \
-  --out /group/esb/cesen/1kp/ks_analysis/1kp/ksrates_raw/branch_subtrees.tsv
+  --out /path/to/ks_analysis/1kp/ksrates_raw/branch_subtrees.tsv
 ```
 
 The script requires `ete3` in the active Python environment.
