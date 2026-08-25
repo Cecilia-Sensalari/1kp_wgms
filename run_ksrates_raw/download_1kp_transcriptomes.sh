@@ -33,16 +33,12 @@ cyverse_base_url=https://de.cyverse.org/anon-files/iplant/home/shared/commons_re
 cyverse_resolver_url=https://datacommons.cyverse.org/api/list/iplant/home/shared/commons_repo/curated/oneKP_capstone_2019/transcript_assemblies
 gdrive_folder_id=18AOvneP_1l5uzE7tVWPKVR9MAkhrtA2N
 gdrive_folder_url="https://drive.google.com/drive/folders/$gdrive_folder_id"
-remote_index_file=$(mktemp "${TMPDIR:-/tmp}/onekp_cyverse_directory_index.XXXXXX")
 keep_dup_reports=${KEEP_DUP_REPORTS:-false}
-trap 'rm -f "$remote_index_file"' EXIT
 
 if [[ $output_dir == gdrive || $output_dir == cyverse ]]; then
     download_source=$output_dir
     output_dir=/group/esb/cesen/1kp/source_data/2.transcriptomes/1kp
 fi
-
-missing_log_file="$output_dir/missing_transcriptomes.tsv"
 
 case $download_source in
     gdrive|cyverse) ;;
@@ -51,6 +47,11 @@ case $download_source in
         exit 1
         ;;
 esac
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+remote_index_file="$script_dir/onekp_${download_source}_directory_index.tsv"
+remote_index_loaded=false
+missing_log_file="$output_dir/missing_transcriptomes.tsv"
 
 if [[ ! -f $species_list ]]; then
     echo "Species list does not exist: $species_list" >&2
@@ -272,21 +273,23 @@ download_remote_archive() {
     esac
 }
 
-# Build a temporary list of public OneKP directory names from the selected
-# source. The remote directory names are not always exactly CODE + species name,
-# for example:
+# Build a fresh, inspectable list of public OneKP directory names from the
+# selected source. The remote directory names are not always exactly CODE +
+# species name, for example:
 #   QFND-Cyanophora_paradoxa-CCAC_0074
 # This lets us resolve the exact remote directory from the 1KP sample ID while
 # keeping predictable local output filenames based on the species-list entry.
 ensure_cyverse_remote_index() {
-    if [[ -s $remote_index_file ]]; then
+    local tmp_index="${remote_index_file}.tmp"
+
+    if [[ $remote_index_loaded == true ]]; then
         return 0
     fi
 
     echo "Resolving CyVerse directory names from $cyverse_resolver_url" >&2
-    rm -f "$remote_index_file"
+    rm -f "$tmp_index"
 
-    if ! python3 - "$cyverse_resolver_url" "$remote_index_file" <<'PY'; then
+    if ! python3 - "$cyverse_resolver_url" "$tmp_index" <<'PY'; then
 import json
 import re
 import sys
@@ -319,27 +322,32 @@ with open(remote_index_file, "w", encoding="utf-8") as handle:
     handle.write("\n".join(f"{label}\t" for label in labels))
     handle.write("\n")
 PY
-        rm -f "$remote_index_file"
+        rm -f "$tmp_index"
         echo "Could not download or parse OneKP directory index from $cyverse_resolver_url" >&2
         return 1
     fi
 
-    if [[ ! -s $remote_index_file ]]; then
-        rm -f "$remote_index_file"
+    if [[ ! -s $tmp_index ]]; then
+        rm -f "$tmp_index"
         echo "OneKP directory index from $cyverse_resolver_url was empty" >&2
         return 1
     fi
+
+    mv "$tmp_index" "$remote_index_file"
+    remote_index_loaded=true
 }
 
 ensure_gdrive_remote_index() {
-    if [[ -s $remote_index_file ]]; then
+    local tmp_index="${remote_index_file}.tmp"
+
+    if [[ $remote_index_loaded == true ]]; then
         return 0
     fi
 
     echo "Resolving Google Drive directory names from $gdrive_folder_url" >&2
-    rm -f "$remote_index_file"
+    rm -f "$tmp_index"
 
-    if ! python3 - "$gdrive_folder_id" "$remote_index_file" <<'PY'; then
+    if ! python3 - "$gdrive_folder_id" "$tmp_index" <<'PY'; then
 from html.parser import HTMLParser
 import html
 import re
@@ -396,16 +404,19 @@ with open(remote_index_file, "w", encoding="utf-8") as handle:
     for directory_name, directory_id in rows:
         handle.write(f"{directory_name}\t{directory_id}\n")
 PY
-        rm -f "$remote_index_file"
+        rm -f "$tmp_index"
         echo "Could not download or parse Google Drive directory index from $gdrive_folder_url" >&2
         return 1
     fi
 
-    if [[ ! -s $remote_index_file ]]; then
-        rm -f "$remote_index_file"
+    if [[ ! -s $tmp_index ]]; then
+        rm -f "$tmp_index"
         echo "Google Drive directory index from $gdrive_folder_url was empty" >&2
         return 1
     fi
+
+    mv "$tmp_index" "$remote_index_file"
+    remote_index_loaded=true
 }
 
 ensure_remote_index() {
