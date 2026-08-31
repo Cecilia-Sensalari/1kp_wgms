@@ -53,7 +53,7 @@ KSRATES_RAW_DIR = PROJECT_ROOT / "ks_analysis/1kp/ksrates_raw"
 CONFIG_DIR = KSRATES_RAW_DIR / "configs/paralog_batches"
 
 # Location script to download transcriptomes from GDrive or CyVerse
-DOWNLOAD_SCRIPT = PROJECT_ROOT / "code/1kp_wgms/run_ksrates_raw/download_1kp_transcriptomes.sh"
+DOWNLOAD_SCRIPT = PROJECT_ROOT / "code/1kp_wgms/run_ksrates_raw/download_1kp_transcriptomes_gdrive_cyverse.sh"
 
 
 @dataclass
