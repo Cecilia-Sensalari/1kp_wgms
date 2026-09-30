@@ -538,6 +538,25 @@ def build_ortholog_command(
     return command
 
 
+def build_ortholog_analysis_command(
+    args: argparse.Namespace,
+    config_path: Path,
+    pair_tsv_path: Path,
+) -> List[str]:
+    """
+    orthologs-analysis is what actually estimates the Ks distribution peak and writes it (plus
+    the raw Ks list) into the shared peak_database_path/ks_list_database_path TSVs -
+    orthologs-ks on its own only produces raw local Ks values, never touching those databases.
+    Pointed at a single-pair TSV (pair_tsv_path) rather than a full per-focal ortholog_pairs file,
+    so this only ever processes the one pair orthologs-ks was just run for.
+    """
+    command = make_ksrates_command(args, ("orthologs-analysis", str(config_path)))
+    if args.expert_config is not None:
+        command.extend(("--expert", str(args.expert_config)))
+    command.extend(("--ortholog-pairs", str(pair_tsv_path)))
+    return command
+
+
 def build_paralog_command(
     args: argparse.Namespace,
     config_path: Path,
@@ -711,13 +730,20 @@ def write_tsv(path: Path, header: Sequence[str], rows: Iterable[Sequence[object]
             writer.writerow([str(value) for value in row])
 
 
-def write_command_file(path: Path, commands: Sequence[Tuple[Path, Sequence[str]]]) -> None:
+def write_command_file(path: Path, entries: Sequence[Tuple[Path, Sequence[Sequence[str]]]]) -> None:
+    """
+    Write a bash script with one line per entry: "( cd <cwd> && <cmd1> && <cmd2> && ... )".
+    Each entry's command list lets several ksrates invocations that must run in sequence (e.g.
+    orthologs-ks then orthologs-analysis for the same pair) live on one script line, sharing one
+    cwd, with "&&" ensuring a later command only runs if the earlier one succeeded.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as handle:
         handle.write("#!/usr/bin/env bash\n")
         handle.write("set -euo pipefail\n\n")
-        for cwd, command in commands:
-            handle.write(f"( cd {shlex.quote(str(cwd))} && {shell_join(command)} )\n")
+        for cwd, commands in entries:
+            joined = " && ".join(shell_join(command) for command in commands)
+            handle.write(f"( cd {shlex.quote(str(cwd))} && {joined} )\n")
     path.chmod(0o755)
 
 
@@ -804,7 +830,7 @@ def main() -> None:
         for config in configs:
             run_init(args, config)
 
-    init_commands = [(config.init_run_dir, build_init_command(args, config.config_path)) for config in configs]
+    init_commands = [(config.init_run_dir, [build_init_command(args, config.config_path)]) for config in configs]
     write_command_file(args.out_dir / "init_commands.sh", init_commands)
 
     all_occurrences: List[PairOccurrence] = []
@@ -908,6 +934,12 @@ def main() -> None:
             branch_pair_rows(branch_pair_map),
         )
 
+    # Each entry chains orthologs-ks (raw Ks computation, local files only) with
+    # orthologs-analysis (bootstrap peak estimation, writes to the shared peak/Ks-list TSVs) via
+    # "&&", so the database actually gets populated - orthologs-ks alone never touches it. The
+    # analysis step is scoped to a single-pair TSV (not the full per-focal ortholog_pairs file)
+    # so it only ever processes the one pair just computed, not every pair that focal needs.
+    ortholog_pairs_dir = ortholog_work_dir / "pairs"
     ortholog_commands = []
     for (species_1, species_2), occurrences in sorted(
         pair_to_occurrences.items(),
@@ -917,10 +949,15 @@ def main() -> None:
             occurrences,
             key=lambda item: (item.branch_id, item.focal_species.lower(), str(item.config_path)),
         )[0]
+        pair_tsv_path = ortholog_pairs_dir / f"{species_1}_{species_2}.tsv"
+        write_tsv(pair_tsv_path, ("Species1", "Species2"), [(species_1, species_2)])
         ortholog_commands.append(
             (
                 ortholog_work_dir,
-                build_ortholog_command(args, chosen.config_path, species_1, species_2),
+                [
+                    build_ortholog_command(args, chosen.config_path, species_1, species_2),
+                    build_ortholog_analysis_command(args, chosen.config_path, pair_tsv_path),
+                ],
             )
         )
     write_command_file(args.out_dir / "orthologs_ks_commands.sh", ortholog_commands)
@@ -944,7 +981,7 @@ def main() -> None:
                 occurrences,
                 key=lambda item: (item.branch_id, str(item.config_path)),
             )[0]
-            paralog_commands.append((paralog_work_dir, build_paralog_command(args, chosen.config_path)))
+            paralog_commands.append((paralog_work_dir, [build_paralog_command(args, chosen.config_path)]))
         write_command_file(args.out_dir / "paralogs_ks_commands.sh", paralog_commands)
 
         write_tsv(
