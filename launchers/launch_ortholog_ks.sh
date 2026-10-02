@@ -15,7 +15,7 @@ KSRATES_RAW=/group/esb/cesen/1kp/ks_analysis/1kp/ksrates_raw
 PARALOG_DB=$KSRATES_RAW/paralog_ks_database/paralog_ks_server_address.txt
 
 python /group/esb/cesen/1kp/code/1kp_wgms/run_ksrates_raw/prepare_branch_ksrates_configs.py \
-  --subtrees "$KSRATES_RAW/branch_subtrees.tsv" \
+  --datasets "$KSRATES_RAW/branch_subtrees.tsv" \
   --species-metadata "$KSRATES_RAW/species_metadata.tsv" \
   --out-dir "$KSRATES_RAW/branch_setup" \
   --expert-config "$KSRATES_RAW/config_expert.txt" \

@@ -16,9 +16,9 @@
 #SBATCH --mem=4G
 
 SIF=/group/esb/cesen/1kp/software/ksrates_paralog_ks_db.sif
-LOCATION=/group/esb/cesen/1kp/ks_analysis/1kp/ksrates_raw/paralog_ks_database
+LOCATION=/group/esb/cesen/1kp/ks_analysis/1kp/paralog_ks_database
 
 singularity exec \
-    -B "$LOCATION" \
+    -B /group/esb/cesen/1kp/ \
     "$SIF" \
     ksrates launch-paralog-ks-server --location "$LOCATION"
