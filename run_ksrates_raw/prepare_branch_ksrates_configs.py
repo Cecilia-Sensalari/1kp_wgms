@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Prepare branch-centered ksrates configs and ortholog-pair workloads.
+"""Prepare per-dataset ksrates configs and ortholog-pair workloads.
+
+Each dataset is an independent ksrates analysis - its own tree and its own focal-species
+selection - whether that's one of many systematically-generated subtrees of one big backbone
+tree, or a handful of entirely unrelated, independently-curated datasets (e.g. "grasses",
+"asterids") that happen to share some species and want to use the same centralized database.
 
 The script expects two small TSV files:
 
@@ -8,21 +13,21 @@ The script expects two small TSV files:
    Optional columns:
       latin_name    gff_filename
 
-2. A branch/subtree table with at least:
-      branch_id    newick_tree
+2. A dataset table with at least:
+      dataset_id    newick_tree
    Optional columns:
       focal_species    target_species
 
-By default, every leaf in a subtree becomes a focal species. If the
+By default, every leaf in a dataset's tree becomes a focal species. If the
 ``focal_species`` column is present, only those comma/semicolon/space-separated
-species are used as focal species for that subtree.
+species are used as focal species for that dataset.
 
 The normal workflow is:
 
     python prepare_branch_ksrates_configs.py \
-        --subtrees branch_subtrees.tsv \
+        --datasets datasets.tsv \
         --species-metadata species_metadata.tsv \
-        --out-dir ksrates_branch_setup \
+        --out-dir ksrates_setup \
         --max-outgroups 4 \
         --run-init
 
@@ -41,6 +46,7 @@ import shlex
 import subprocess
 import sys
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -58,8 +64,8 @@ class SpeciesRecord:
 
 
 @dataclass(frozen=True)
-class SubtreeRecord:
-    branch_id: str
+class DatasetRecord:
+    dataset_id: str
     newick_tree: str
     leaves: Tuple[str, ...]
     focal_species: Tuple[str, ...]
@@ -68,7 +74,7 @@ class SubtreeRecord:
 
 @dataclass(frozen=True)
 class ConfigRecord:
-    branch_id: str
+    dataset_id: str
     focal_species: str
     config_path: Path
     init_run_dir: Path
@@ -79,7 +85,7 @@ class ConfigRecord:
 class PairOccurrence:
     species_1: str
     species_2: str
-    branch_id: str
+    dataset_id: str
     focal_species: str
     config_path: Path
     init_run_dir: Path
@@ -91,15 +97,15 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Generate one ksrates config per selected focal species in each "
-            "branch-centered subtree, run/plan ksrates init, and collect the "
+            "independent dataset, run/plan ksrates init, and collect the "
             "ortholog Ks species pairs reported by ksrates."
         )
     )
     parser.add_argument(
-        "--subtrees",
+        "--datasets",
         required=True,
         type=Path,
-        help="TSV with branch_id and newick_tree columns.",
+        help="TSV with dataset_id and newick_tree columns.",
     )
     parser.add_argument(
         "--species-metadata",
@@ -127,7 +133,7 @@ def parse_args() -> argparse.Namespace:
             "Path to the paralog Ks sqld server's address file. When given, every generated "
             "config gets a ks_list_paralog_database_path line pointed at it, and a "
             "paralogs_ks_commands.sh is written with one deduplicated 'paralogs-ks' command per "
-            "unique species across all branches (mirrors the existing ortholog-pair dedup). The "
+            "unique species across all datasets (mirrors the existing ortholog-pair dedup). The "
             "paired expert config (--expert-config) must set use_paralog_ks_database = yes."
         ),
     )
@@ -136,6 +142,17 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=4,
         help="Thread count to place in generated paralogs-ks command file.",
+    )
+    parser.add_argument(
+        "--paralog-check-workers",
+        type=int,
+        default=16,
+        help=(
+            "Number of concurrent 'ksrates check-paralog-db' calls to run while filtering "
+            "already-populated species out of paralogs_ks_commands.sh. Each call is a small "
+            "network round trip to the sqld server, not CPU-bound, so this can comfortably "
+            "exceed the machine's core count."
+        ),
     )
     parser.add_argument(
         "--ksrates-command",
@@ -157,8 +174,9 @@ def parse_args() -> argparse.Namespace:
         help=(
             "init-pairs trusts ortholog_pairs_<focal> as written by ksrates. "
             "target-trios derives only focal-target-outgroup pairs from "
-            "ortholog_trios_<focal> rows whose sister/comparison species is in "
-            "the subtree table's target_species column."
+            "ortholog_trios_<focal> rows whose sister/comparison species is one of the "
+            "species this dataset's target_species column says to actually compute "
+            "ortholog pairs against."
         ),
     )
     parser.add_argument(
@@ -319,21 +337,21 @@ def read_species_metadata(path: Path, keep_relative_paths: bool) -> Dict[str, Sp
     return metadata
 
 
-def read_subtrees(path: Path) -> List[SubtreeRecord]:
+def read_datasets(path: Path) -> List[DatasetRecord]:
     fieldnames, rows = read_table(path)
-    branch_col = column_name(fieldnames, ("branch_id", "branch", "node_id", "test_branch"), True)
+    dataset_col = column_name(fieldnames, ("dataset_id", "branch_id", "branch", "node_id"), True)
     newick_col = column_name(fieldnames, ("newick_tree", "newick", "subtree_newick"), True)
     focal_col = column_name(fieldnames, ("focal_species", "focals", "focal_species_list"), False)
     target_col = column_name(fieldnames, ("target_species", "targets", "comparison_species"), False)
 
-    subtrees: List[SubtreeRecord] = []
-    assert branch_col is not None
+    datasets: List[DatasetRecord] = []
+    assert dataset_col is not None
     assert newick_col is not None
     for row_number, row in enumerate(rows, start=2):
-        branch_id = row.get(branch_col, "").strip()
+        dataset_id = row.get(dataset_col, "").strip()
         newick_tree = row.get(newick_col, "").strip()
-        if not branch_id:
-            fail(f"{path}:{row_number} has an empty branch_id")
+        if not dataset_id:
+            fail(f"{path}:{row_number} has an empty dataset_id")
         if not newick_tree:
             fail(f"{path}:{row_number} has an empty Newick tree")
         leaves = tuple(parse_newick_leaves(newick_tree))
@@ -345,16 +363,16 @@ def read_subtrees(path: Path) -> List[SubtreeRecord]:
             focal_species = leaves
 
         target_species = tuple(split_species_list(row.get(target_col, ""))) if target_col else tuple()
-        subtrees.append(
-            SubtreeRecord(
-                branch_id=branch_id,
+        datasets.append(
+            DatasetRecord(
+                dataset_id=dataset_id,
                 newick_tree=newick_tree,
                 leaves=leaves,
                 focal_species=focal_species,
                 target_species=target_species,
             )
         )
-    return subtrees
+    return datasets
 
 
 def split_species_list(value: str) -> List[str]:
@@ -426,7 +444,7 @@ def canonical_pair(species_1: str, species_2: str) -> Tuple[str, str]:
 
 def write_ksrates_config(
     config_path: Path,
-    subtree: SubtreeRecord,
+    dataset: DatasetRecord,
     focal_species: str,
     metadata: Dict[str, SpeciesRecord],
     args: argparse.Namespace,
@@ -434,13 +452,13 @@ def write_ksrates_config(
     ks_list_database_path: Path,
     paralog_database_path: Optional[Path] = None,
 ) -> None:
-    records = [metadata[species] for species in subtree.leaves]
+    records = [metadata[species] for species in dataset.leaves]
     focal_record = metadata[focal_species]
 
     lines = [
         "[SPECIES]",
         f"focal_species = {focal_species}",
-        f"newick_tree = {subtree.newick_tree}",
+        f"newick_tree = {dataset.newick_tree}",
         "",
         format_mapping("latin_names", [(record.species, record.latin_name) for record in records]),
         "",
@@ -568,11 +586,60 @@ def build_paralog_command(
     return command
 
 
+def build_check_paralog_db_command(
+    args: argparse.Namespace,
+    config_path: Path,
+    analysis_type: str,
+) -> List[str]:
+    command = make_ksrates_command(args, ("check-paralog-db", str(config_path)))
+    if args.expert_config is not None:
+        command.extend(("--expert", str(args.expert_config)))
+    command.extend(("--type", analysis_type))
+    return command
+
+
+def species_still_needs_paralog_ks(args: argparse.Namespace, config_path: Path) -> bool:
+    """
+    Checks the paralog Ks database (via 'ksrates check-paralog-db') for each analysis type
+    requested by --paranome/--collinearity/--reciprocal-retention. This is what makes rerunning
+    this script after changing those flags (e.g. turning collinearity on for an already-populated
+    tree) cheap: without it, paralogs_ks_commands.sh would always list every unique species again,
+    submitting a job for species that already have everything they need.
+
+    :return: True if at least one requested analysis type is still missing for this species
+             (a paralogs-ks command should be emitted for it), False only if every requested type
+             is already present (nothing to do for this species).
+    """
+    requested = []
+    if args.paranome == "yes":
+        requested.append("paranome")
+    if args.collinearity == "yes":
+        requested.append("anchors")
+    if args.reciprocal_retention == "yes":
+        requested.append("recret")
+    if not requested:
+        return False
+
+    for analysis_type in requested:
+        command = build_check_paralog_db_command(args, config_path, analysis_type)
+        try:
+            # Any failure to run the check (database unreachable, ksrates missing, ...) is
+            # treated the same as "missing": safe to over-include a species here (redundant
+            # work, caught by ks_paralogs()'s own local-disk resume logic) rather than silently
+            # drop one that actually still needs something.
+            result = subprocess.run(command, capture_output=True, text=True)
+        except OSError:
+            return True
+        if result.returncode != 0:
+            return True
+    return False
+
+
 def run_init(args: argparse.Namespace, config: ConfigRecord) -> None:
     config.init_run_dir.mkdir(parents=True, exist_ok=True)
     command = build_init_command(args, config.config_path)
     print(
-        f"[init] branch={config.branch_id} focal={config.focal_species}: "
+        f"[init] dataset={config.dataset_id} focal={config.focal_species}: "
         f"{shell_join(command)}",
         flush=True,
     )
@@ -710,7 +777,7 @@ def collect_pairs_for_config(args: argparse.Namespace, config: ConfigRecord) -> 
         PairOccurrence(
             species_1=species_1,
             species_2=species_2,
-            branch_id=config.branch_id,
+            dataset_id=config.dataset_id,
             focal_species=config.focal_species,
             config_path=config.config_path,
             init_run_dir=config.init_run_dir,
@@ -749,7 +816,7 @@ def write_command_file(path: Path, entries: Sequence[Tuple[Path, Sequence[Sequen
 
 def main() -> None:
     args = parse_args()
-    args.subtrees = args.subtrees.resolve()
+    args.datasets = args.datasets.resolve()
     args.species_metadata = args.species_metadata.resolve()
     args.out_dir = args.out_dir.resolve()
     if args.expert_config is not None:
@@ -758,12 +825,13 @@ def main() -> None:
         args.paralog_database = args.paralog_database.resolve()
 
     metadata = read_species_metadata(args.species_metadata, args.keep_relative_paths)
-    subtrees = read_subtrees(args.subtrees)
+    datasets = read_datasets(args.datasets)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    config_root = args.out_dir / "configs"
-    init_root = args.out_dir / "init_runs"
-    branch_root = args.out_dir / "branches"
+    # Each dataset's configs/, per-dataset ortholog_pairs.tsv, and per-focal init/pipeline
+    # working directory all live together under datasets/<dataset_id>/ - one self-contained
+    # home per dataset, instead of parallel top-level dirs sharded by dataset.
+    datasets_root = args.out_dir / "datasets"
     database_root = args.out_dir / "databases"
     ortholog_work_dir = args.out_dir / "ortholog_runs"
     paralog_work_dir = args.out_dir / "paralog_runs"
@@ -776,39 +844,43 @@ def main() -> None:
     ks_list_database_path = database_root / "ortholog_ks_list_db.tsv"
 
     configs: List[ConfigRecord] = []
-    for subtree in subtrees:
-        ensure_species_known(subtree.leaves, metadata, f"branch {subtree.branch_id!r} Newick")
-        ensure_species_known(subtree.focal_species, metadata, f"branch {subtree.branch_id!r} focal list")
-        unknown_focals = sorted(set(subtree.focal_species) - set(subtree.leaves))
+    for dataset in datasets:
+        ensure_species_known(dataset.leaves, metadata, f"dataset {dataset.dataset_id!r} Newick")
+        ensure_species_known(dataset.focal_species, metadata, f"dataset {dataset.dataset_id!r} focal list")
+        unknown_focals = sorted(set(dataset.focal_species) - set(dataset.leaves))
         if unknown_focals:
             fail(
-                f"branch {subtree.branch_id!r} focal species are not in the subtree: "
+                f"dataset {dataset.dataset_id!r} focal species are not in the dataset: "
                 f"{', '.join(unknown_focals)}"
             )
-        if subtree.target_species:
+        if dataset.target_species:
             ensure_species_known(
-                subtree.target_species,
+                dataset.target_species,
                 metadata,
-                f"branch {subtree.branch_id!r} target list",
+                f"dataset {dataset.dataset_id!r} target list",
             )
-            unknown_targets = sorted(set(subtree.target_species) - set(subtree.leaves))
+            unknown_targets = sorted(set(dataset.target_species) - set(dataset.leaves))
             if unknown_targets:
                 fail(
-                    f"branch {subtree.branch_id!r} target species are not in the subtree: "
+                    f"dataset {dataset.dataset_id!r} target species are not in the dataset: "
                     f"{', '.join(unknown_targets)}"
                 )
 
-        branch_dir_name = safe_name(subtree.branch_id)
-        for focal_species in subtree.focal_species:
+        dataset_dir_name = safe_name(dataset.dataset_id)
+        dataset_dir = datasets_root / dataset_dir_name
+        for focal_species in dataset.focal_species:
             config_path = (
-                config_root
-                / branch_dir_name
-                / f"config_{branch_dir_name}_{safe_name(focal_species)}.txt"
+                dataset_dir
+                / "configs"
+                / f"config_{dataset_dir_name}_{safe_name(focal_species)}.txt"
             )
-            init_run_dir = init_root / branch_dir_name / safe_name(focal_species)
+            # Also the real Stage-4 main.nf pipeline run's own working directory for this
+            # focal species, not just a throwaway init-probe location - ksrates' own hardcoded
+            # rate_adjustment/<focal>/ subdirectory lands inside here either way.
+            init_run_dir = dataset_dir / safe_name(focal_species)
             write_ksrates_config(
                 config_path,
-                subtree,
+                dataset,
                 focal_species,
                 metadata,
                 args,
@@ -818,11 +890,11 @@ def main() -> None:
             )
             configs.append(
                 ConfigRecord(
-                    branch_id=subtree.branch_id,
+                    dataset_id=dataset.dataset_id,
                     focal_species=focal_species,
                     config_path=config_path,
                     init_run_dir=init_run_dir,
-                    target_species=subtree.target_species,
+                    target_species=dataset.target_species,
                 )
             )
 
@@ -845,7 +917,7 @@ def main() -> None:
     write_tsv(
         args.out_dir / "config_manifest.tsv",
         (
-            "branch_id",
+            "dataset_id",
             "focal_species",
             "config_path",
             "init_run_dir",
@@ -853,7 +925,7 @@ def main() -> None:
         ),
         (
             (
-                config.branch_id,
+                config.dataset_id,
                 config.focal_species,
                 config.config_path,
                 config.init_run_dir,
@@ -864,18 +936,21 @@ def main() -> None:
     )
 
     pair_to_occurrences: Dict[Tuple[str, str], List[PairOccurrence]] = defaultdict(list)
-    branch_to_occurrences: Dict[str, List[PairOccurrence]] = defaultdict(list)
+    dataset_to_occurrences: Dict[str, List[PairOccurrence]] = defaultdict(list)
     for occurrence in all_occurrences:
         pair = canonical_pair(occurrence.species_1, occurrence.species_2)
         pair_to_occurrences[pair].append(occurrence)
-        branch_to_occurrences[occurrence.branch_id].append(occurrence)
+        dataset_to_occurrences[occurrence.dataset_id].append(occurrence)
 
+    # Global cross-dataset manifests live under ortholog_runs/, next to the pair working files
+    # and wgd output they inform - not scattered at the out-dir root separate from the work
+    # they drive.
     write_tsv(
-        args.out_dir / "ortholog_pairs_by_source.tsv",
+        ortholog_work_dir / "ortholog_pairs_by_source.tsv",
         (
             "species_1",
             "species_2",
-            "branch_id",
+            "dataset_id",
             "focal_species",
             "config_path",
             "init_run_dir",
@@ -886,7 +961,7 @@ def main() -> None:
             (
                 occurrence.species_1,
                 occurrence.species_2,
-                occurrence.branch_id,
+                occurrence.dataset_id,
                 occurrence.focal_species,
                 occurrence.config_path,
                 occurrence.init_run_dir,
@@ -896,7 +971,7 @@ def main() -> None:
             for occurrence in sorted(
                 all_occurrences,
                 key=lambda item: (
-                    item.branch_id,
+                    item.dataset_id,
                     item.focal_species.lower(),
                     item.species_1.lower(),
                     item.species_2.lower(),
@@ -906,11 +981,11 @@ def main() -> None:
     )
 
     write_tsv(
-        args.out_dir / "ortholog_pairs.tsv",
+        ortholog_work_dir / "ortholog_pairs.tsv",
         (
             "species_1",
             "species_2",
-            "branches",
+            "datasets",
             "focal_species",
             "chosen_config",
             "chosen_init_run_dir",
@@ -918,20 +993,20 @@ def main() -> None:
         global_pair_rows(pair_to_occurrences),
     )
 
-    for branch_id, occurrences in branch_to_occurrences.items():
-        branch_pair_map: Dict[Tuple[str, str], List[PairOccurrence]] = defaultdict(list)
+    for dataset_id, occurrences in dataset_to_occurrences.items():
+        dataset_pair_map: Dict[Tuple[str, str], List[PairOccurrence]] = defaultdict(list)
         for occurrence in occurrences:
-            branch_pair_map[canonical_pair(occurrence.species_1, occurrence.species_2)].append(occurrence)
+            dataset_pair_map[canonical_pair(occurrence.species_1, occurrence.species_2)].append(occurrence)
         write_tsv(
-            branch_root / safe_name(branch_id) / "ortholog_pairs.tsv",
+            datasets_root / safe_name(dataset_id) / "ortholog_pairs.tsv",
             (
                 "species_1",
                 "species_2",
-                "branch_id",
+                "dataset_id",
                 "focal_species",
                 "chosen_config",
             ),
-            branch_pair_rows(branch_pair_map),
+            dataset_pair_rows(dataset_pair_map),
         )
 
     # Each entry chains orthologs-ks (raw Ks computation, local files only) with
@@ -947,7 +1022,7 @@ def main() -> None:
     ):
         chosen = sorted(
             occurrences,
-            key=lambda item: (item.branch_id, item.focal_species.lower(), str(item.config_path)),
+            key=lambda item: (item.dataset_id, item.focal_species.lower(), str(item.config_path)),
         )[0]
         pair_tsv_path = ortholog_pairs_dir / f"{species_1}_{species_2}.tsv"
         write_tsv(pair_tsv_path, ("Species1", "Species2"), [(species_1, species_2)])
@@ -963,44 +1038,66 @@ def main() -> None:
     write_command_file(args.out_dir / "orthologs_ks_commands.sh", ortholog_commands)
 
     # Species-level dedup for paralog population, mirroring the pair-level dedup above: the same
-    # real species can appear as focal_species in many different branches' subtrees (since
-    # species is drawn from one global species_metadata.tsv, the string itself is already a
-    # stable cross-branch identity - no latin-name translation needed, unlike per-branch informal
-    # names elsewhere). Without this, feeding every (branch, focal) config to paralogs-ks-multi
-    # would launch one paralogs-ks call per branch a species appears in, not once per species -
+    # real species can appear as focal_species in many different datasets (since species is
+    # drawn from one global species_metadata.tsv, the string itself is already a stable
+    # cross-dataset identity - no latin-name translation needed, unlike per-dataset informal
+    # names elsewhere). Without this, feeding every (dataset, focal) config to paralogs-ks-multi
+    # would launch one paralogs-ks call per dataset a species appears in, not once per species -
     # exactly the duplicate-computation race this preparation step exists to avoid.
     if args.paralog_database is not None:
         species_to_occurrences: Dict[str, List[ConfigRecord]] = defaultdict(list)
         for config in configs:
             species_to_occurrences[config.focal_species].append(config)
 
-        paralog_commands = []
-        for species in sorted(species_to_occurrences, key=str.lower):
-            occurrences = species_to_occurrences[species]
-            chosen = sorted(
+        chosen_config_by_species: Dict[str, Path] = {
+            species: sorted(
                 occurrences,
-                key=lambda item: (item.branch_id, str(item.config_path)),
-            )[0]
-            paralog_commands.append((paralog_work_dir, [build_paralog_command(args, chosen.config_path)]))
+                key=lambda item: (item.dataset_id, str(item.config_path)),
+            )[0].config_path
+            for species, occurrences in species_to_occurrences.items()
+        }
+
+        # Each check is a small network round trip to the sqld server, not CPU-bound, so these
+        # run concurrently - run serially this would dominate wall-clock time at ~2000-species
+        # scale even though every individual check is cheap.
+        ordered_species = sorted(species_to_occurrences, key=str.lower)
+        with ThreadPoolExecutor(max_workers=args.paralog_check_workers) as executor:
+            check_results = list(
+                executor.map(
+                    lambda species: species_still_needs_paralog_ks(args, chosen_config_by_species[species]),
+                    ordered_species,
+                )
+            )
+        queued_species: Dict[str, bool] = dict(zip(ordered_species, check_results))
+
+        paralog_commands = []
+        for species in ordered_species:
+            if queued_species[species]:
+                paralog_commands.append(
+                    (paralog_work_dir, [build_paralog_command(args, chosen_config_by_species[species])])
+                )
         write_command_file(args.out_dir / "paralogs_ks_commands.sh", paralog_commands)
 
         write_tsv(
-            args.out_dir / "paralog_species.tsv",
-            ("species", "branches", "chosen_config"),
+            paralog_work_dir / "paralog_species.tsv",
+            ("species", "datasets", "chosen_config", "queued"),
             (
                 (
                     species,
-                    ",".join(sorted({occ.branch_id for occ in occurrences}, key=str.lower)),
-                    sorted(occurrences, key=lambda item: (item.branch_id, str(item.config_path)))[0].config_path,
+                    ",".join(sorted({occ.dataset_id for occ in occurrences}, key=str.lower)),
+                    sorted(occurrences, key=lambda item: (item.dataset_id, str(item.config_path)))[0].config_path,
+                    "yes" if queued_species[species] else "no",
                 )
                 for species, occurrences in sorted(species_to_occurrences.items(), key=lambda item: item[0].lower())
             ),
         )
 
-        print(f"Collected {len(species_to_occurrences)} unique paralog species")
+        already_populated = len(species_to_occurrences) - len(paralog_commands)
+        print(f"Collected {len(species_to_occurrences)} unique paralog species "
+              f"({len(paralog_commands)} queued, {already_populated} already fully populated)")
         print(f"Wrote paralog command file: {args.out_dir / 'paralogs_ks_commands.sh'}")
 
-    print(f"Wrote {len(configs)} ksrates configs to {config_root}")
+    print(f"Wrote {len(configs)} ksrates configs to {datasets_root}")
     print(f"Wrote init command file: {args.out_dir / 'init_commands.sh'}")
     if pair_to_occurrences:
         print(f"Collected {len(pair_to_occurrences)} unique ortholog pairs")
@@ -1025,30 +1122,30 @@ def global_pair_rows(
         pair_to_occurrences.items(),
         key=lambda item: (item[0][0].lower(), item[0][1].lower()),
     ):
-        branches = sorted({occurrence.branch_id for occurrence in occurrences})
+        datasets = sorted({occurrence.dataset_id for occurrence in occurrences})
         focals = sorted({occurrence.focal_species for occurrence in occurrences}, key=str.lower)
         chosen = sorted(
             occurrences,
-            key=lambda item: (item.branch_id, item.focal_species.lower(), str(item.config_path)),
+            key=lambda item: (item.dataset_id, item.focal_species.lower(), str(item.config_path)),
         )[0]
         yield (
             species_1,
             species_2,
-            ",".join(branches),
+            ",".join(datasets),
             ",".join(focals),
             chosen.config_path,
             chosen.init_run_dir,
         )
 
 
-def branch_pair_rows(
-    branch_pair_map: Dict[Tuple[str, str], List[PairOccurrence]]
+def dataset_pair_rows(
+    dataset_pair_map: Dict[Tuple[str, str], List[PairOccurrence]]
 ) -> Iterable[Tuple[object, ...]]:
     for (species_1, species_2), occurrences in sorted(
-        branch_pair_map.items(),
+        dataset_pair_map.items(),
         key=lambda item: (item[0][0].lower(), item[0][1].lower()),
     ):
-        branch_id = sorted({occurrence.branch_id for occurrence in occurrences})[0]
+        dataset_id = sorted({occurrence.dataset_id for occurrence in occurrences})[0]
         focals = sorted({occurrence.focal_species for occurrence in occurrences}, key=str.lower)
         chosen = sorted(
             occurrences,
@@ -1057,7 +1154,7 @@ def branch_pair_rows(
         yield (
             species_1,
             species_2,
-            branch_id,
+            dataset_id,
             ",".join(focals),
             chosen.config_path,
         )
