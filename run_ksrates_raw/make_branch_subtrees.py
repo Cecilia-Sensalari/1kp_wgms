@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build compact branch-centered subtrees for ksrates.
+"""Build compact per-dataset subtrees for ksrates.
 
 For each internal non-root branch, the child node is treated as clade A.
 The output subtree keeps:
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -166,11 +167,15 @@ def pruned_newick(tree, species: Sequence[str]) -> str:
     return subtree.write(format=9).strip()
 
 
-def branch_id(node, index: int) -> str:
-    if node.is_leaf():
-        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", node.name or "").strip("_")
-        return f"{index:06d}_{safe_name}"
-    return f"{index:06d}_internal"
+def dataset_id(selected: Sequence[str]) -> str:
+    """
+    Content-derived identity for a branch/dataset: a short hash of its own full selected
+    species set, not the traversal order it happened to be visited in. This makes the id stable
+    across reruns even if the tree or traversal changes elsewhere - a clade whose species set is
+    unchanged always gets the same id, while a clade whose set actually changes gets a new one
+    (rather than silently reusing/renaming an existing dataset directory with different content).
+    """
+    return hashlib.sha1("_".join(sorted(selected)).encode("utf-8")).hexdigest()[:8]
 
 
 def to_float(value: str) -> Optional[float]:
@@ -258,7 +263,8 @@ def rows_for_tree(
             continue
 
         yield [
-            branch_id(node, branch_index),
+            dataset_id(selected),
+            branch_index,
             pruned_newick(tree, selected),
             ",".join(focal_species),
             ",".join(selected),
@@ -282,7 +288,8 @@ def main() -> None:
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
         writer.writerow(
             [
-                "branch_id",
+                "dataset_id",
+                "traversal_order",
                 "newick_tree",
                 "focal_species",
                 "target_species",
