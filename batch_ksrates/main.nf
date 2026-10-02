@@ -33,6 +33,10 @@ params.older_clades = 3
 params.min_species = 3
 params.busco_weight = 0.8
 params.transrate_weight = 0.2
+// If set, keep only the first N rows of the generated dataset list - for quick end-to-end
+// testing (e.g. with --run_init and --paralog_database also on) without paying for the full
+// ~2354-dataset tree. Unset (null) by default: full real run, unaffected.
+params.test_max_datasets = null
 
 // prepare_branch_ksrates_configs.py passthrough (defaults match that script's own argparse defaults)
 params.expert_config = null
@@ -84,6 +88,7 @@ log.info """
          expert_config:      ${params.expert_config ?: '(none)'}
          paralog_database:   ${params.paralog_database ?: '(none)'}
          run_init:           ${params.run_init}
+         test_max_datasets:  ${params.test_max_datasets ?: '(none - full run)'}
          """
          .stripIndent()
 
@@ -134,6 +139,14 @@ process generateDatasetList {
         env DATASET_LIST, emit: dataset_list
 
     script:
+    // Groovy-level conditional, not a bash-level one: interpolating an unset params.* value
+    // directly into the script string would literally paste the text "null" into the bash
+    // script below, not behave as empty/false.
+    truncate_cmd = params.test_max_datasets ? """
+    head -n 1 ${base_dir}/branch_subtrees.tsv > ${base_dir}/branch_subtrees.tsv.tmp
+    tail -n +2 ${base_dir}/branch_subtrees.tsv | head -n ${params.test_max_datasets} >> ${base_dir}/branch_subtrees.tsv.tmp
+    mv ${base_dir}/branch_subtrees.tsv.tmp ${base_dir}/branch_subtrees.tsv
+    """ : ""
     """
     python3 ${SCRIPT_DIR}/make_branch_subtrees.py \
         --tree ${params.tree} \
@@ -145,6 +158,7 @@ process generateDatasetList {
         --min-species ${params.min_species} \
         --busco-weight ${params.busco_weight} \
         --transrate-weight ${params.transrate_weight}
+    ${truncate_cmd}
     DATASET_LIST=${base_dir}/branch_subtrees.tsv
     """
 }
