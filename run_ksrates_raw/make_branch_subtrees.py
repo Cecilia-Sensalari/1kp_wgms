@@ -43,6 +43,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-older", type=int, default=2)
     parser.add_argument("--older-clades", type=int, default=3)
     parser.add_argument("--min-species", type=int, default=3)
+    parser.add_argument(
+        "--max-datasets",
+        type=int,
+        default=None,
+        help=(
+            "Stop the tree traversal after writing this many dataset rows, instead of "
+            "walking the full tree - for quick testing without paying for the full "
+            "traversal/pruning cost. Unset: full run, all qualifying branches."
+        ),
+    )
     parser.add_argument("--score-table", type=Path, default=SCORE_TABLE)
     parser.add_argument("--busco-weight", type=float, default=0.8)
     parser.add_argument("--transrate-weight", type=float, default=0.2)
@@ -304,6 +314,8 @@ def main() -> None:
         for row in rows_for_tree(tree, args, scores):
             writer.writerow(row)
             count += 1
+            if args.max_datasets is not None and count >= args.max_datasets:
+                break
 
     print(f"Wrote {count} branch subtrees to {args.out}")
 
