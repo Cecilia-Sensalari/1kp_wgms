@@ -44,9 +44,6 @@ params.paralog_database = null
 params.paralog_threads = 4
 params.paralog_check_workers = 16
 params.ortholog_threads = 4
-// Plain production form by default; override with the "--env PYTHONPATH=/path/to/ksrates"
-// variant (see run_in_container.sh in the ksrates checkout) when testing uncommitted ksrates
-// code changes against the container's baked-in (stale) package instead.
 params.ksrates_command = "singularity exec -B /group/esb/cesen/1kp /group/esb/cesen/1kp/software/ksrates_paralog_ks_db.sif ksrates"
 params.pair_scope = "init-pairs"
 params.max_outgroups = 4
@@ -84,16 +81,8 @@ params.paralog_job_concurrency = 25
 // execute_ortholog_jobs/execute_paralog_jobs finishing in the same invocation - this is its own,
 // separately-triggered step, run once you've checked Stage 2/3's results yourself.
 params.execute_real_pipelines = false
-// Local checkout's main.nf, not "VIB-PSB/ksrates" pulled from GitHub - this has the DB-aware
-// setParalogAnalysis/doRateAdjustment skip gates (see docs/paralog_ks_database.rst) on its
-// paralog_ks_db branch, which isn't published/merged upstream yet. Using the local path also
-// means no network pull is needed and whatever's actually checked out here is what runs,
-// including any local-only commits ahead of origin. The default VIB-PSB/ksrates branch has no
-// DB-aware gate and would schedule wgdParalogs/wgdOrthologs for every focal species regardless
-// of what the shared database already has (the Python package's own internal skip check was
-// removed in favor of this Nextflow-level one - see the "DONE" plan section on this). Revisit
-// once paralog_ks_db is actually merged/published - then this can go back to
-// "VIB-PSB/ksrates -r <tag>".
+// Local checkout's main.nf, not yet "VIB-PSB/ksrates" pulled from GitHub.
+// Revisit once consolidated code is tagged/released.
 params.ksrates_main_nf = '/group/esb/cesen/1kp/code/ksrates/main.nf'
 params.ksrates_container = '/group/esb/cesen/1kp/software/ksrates_paralog_ks_db.sif'
 params.real_pipeline_concurrency = 25
