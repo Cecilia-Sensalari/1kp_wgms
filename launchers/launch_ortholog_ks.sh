@@ -10,16 +10,16 @@
 module load python/x86_64/3.11.4
 source /group/esb/cesen/.venv/venv_python_11/bin/activate
 
-SIF=/group/esb/cesen/1kp/software/ksrates_paralog_ks_db.sif
+SIF=/group/esb/cesen/1kp/software/ksrates_a6822fe_20261007.sif
 KSRATES_RAW=/group/esb/cesen/1kp/ks_analysis/1kp/ksrates_raw
-PARALOG_DB=$KSRATES_RAW/paralog_ks_database/paralog_ks_server_address.txt
+PARALOG_DB=$KSRATES_RAW/ks_database/ks_database_server_address.txt
 
 python /group/esb/cesen/1kp/code/1kp_wgms/run_ksrates_raw/prepare_branch_ksrates_configs.py \
   --datasets "$KSRATES_RAW/branch_subtrees.tsv" \
   --species-metadata "$KSRATES_RAW/species_metadata.tsv" \
   --out-dir "$KSRATES_RAW/branch_setup" \
   --expert-config "$KSRATES_RAW/config_expert.txt" \
-  --ksrates-command "singularity exec -B /group/esb/cesen/1kp $SIF ksrates" \
+  --ksrates-command "singularity exec -B /group/esb/cesen/1kp --env PYTHONPATH=/group/esb/cesen/1kp/code/ksrates $SIF ksrates" \
   --paranome yes \
   --paralog-database "$PARALOG_DB" \
   --max-outgroups 4

@@ -14,7 +14,7 @@
 #
 # max_concurrent (default 25) caps how many array tasks run simultaneously (SLURM's
 # --array=1-N%C syntax) - important here since thousands of tasks all hitting the cluster (and
-# the shared paralog Ks sqld server) at once would be its own problem, separate from the
+# the shared Ks database server) at once would be its own problem, separate from the
 # per-species/per-pair deduplication that already makes parallelizing this safe at all. This
 # throttle can be changed on an already-submitted job without cancelling/resubmitting it:
 #   scontrol update JobId=<jobid> ArrayTaskThrottle=<new_limit>

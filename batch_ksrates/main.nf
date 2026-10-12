@@ -39,12 +39,17 @@ params.transrate_weight = 0.2
 params.test_max_datasets = null
 
 // prepare_branch_ksrates_configs.py passthrough (defaults match that script's own argparse defaults)
+// ksrates container image, plus the local ksrates checkout put first on PYTHONPATH inside it so the
+// not-yet-released code (unified Ks database) is used instead of the older code baked into the image.
+// Blank this default (ksrates_code_dir) once an image built from the current code is used.
+params.ksrates_sif = '/group/esb/cesen/1kp/software/ksrates_a6822fe_20261007.sif'
+params.ksrates_code_dir = '/group/esb/cesen/1kp/code/ksrates'
 params.expert_config = null
 params.paralog_database = null
 params.paralog_threads = 4
 params.paralog_check_workers = 16
 params.ortholog_threads = 4
-params.ksrates_command = "singularity exec -B /group/esb/cesen/1kp /group/esb/cesen/1kp/software/ksrates_paralog_ks_db.sif ksrates"
+params.ksrates_command = "singularity exec -B /group/esb/cesen/1kp ${params.ksrates_code_dir ? '--env PYTHONPATH=' + params.ksrates_code_dir + ' ' : ''}${params.ksrates_sif} ksrates"
 params.pair_scope = "init-pairs"
 params.max_outgroups = 4
 params.consensus_mode = "mean among outgroups"
@@ -84,7 +89,7 @@ params.execute_real_pipelines = false
 // Local checkout's main.nf, not yet "VIB-PSB/ksrates" pulled from GitHub.
 // Revisit once consolidated code is tagged/released.
 params.ksrates_main_nf = '/group/esb/cesen/1kp/code/ksrates/main.nf'
-params.ksrates_container = '/group/esb/cesen/1kp/software/ksrates_paralog_ks_db.sif'
+params.ksrates_container = params.ksrates_sif
 params.real_pipeline_concurrency = 25
 params.real_pipeline_time = '04:00:00'
 
@@ -94,7 +99,7 @@ if (!params.base_dir) {
 base_dir = file(params.base_dir)
 
 if (params.execute_real_pipelines && !params.expert_config) {
-    error "execute_real_pipelines requires --expert_config (it needs use_paralog_ks_database " +
+    error "execute_real_pipelines requires --expert_config (it needs use_ks_database_server " +
         "= yes to actually benefit from the already-populated database, rather than silently " +
         "recomputing everything from scratch)"
 }
@@ -114,12 +119,17 @@ SCRIPT_DIR = "${workflow.projectDir}/../run_ksrates_raw"
 // so a changed --paralog_database/--transcriptomes_dir is always reflected.
 if (params.execute_real_pipelines) {
     bind_mounts = [base_dir.toString(), params.transcriptomes_dir]
+    if (params.ksrates_code_dir) {
+        bind_mounts << params.ksrates_code_dir
+    }
     if (params.paralog_database) {
         bind_mounts << file(params.paralog_database).getParent().toString()
     }
     bind_options = bind_mounts.unique().collect { "-B ${it}" }.join(' ')
 
+    env_line = params.ksrates_code_dir ? "env.PYTHONPATH = '${params.ksrates_code_dir}'" : ""
     file("${base_dir}/ksrates_run.nextflow.config").text = """
+${env_line}
 profiles {
     singularity {
         singularity.enabled = true
