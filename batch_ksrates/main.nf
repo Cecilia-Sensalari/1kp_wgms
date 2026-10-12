@@ -47,7 +47,7 @@ params.ksrates_code_dir = '/group/esb/cesen/1kp/code/ksrates'
 params.expert_config = null
 params.ks_database_server_address_path = null
 params.paralog_threads = 4
-params.paralog_check_workers = 16
+params.db_check_workers = 16
 params.ortholog_threads = 4
 params.ksrates_command = "singularity exec -B /group/esb/cesen/1kp ${params.ksrates_code_dir ? '--env PYTHONPATH=' + params.ksrates_code_dir + ' ' : ''}${params.ksrates_sif} ksrates"
 params.pair_scope = "init-pairs"
@@ -308,7 +308,7 @@ process prepareConfigs {
         ${expert_arg} \
         ${ks_db_arg} \
         --paralog-threads ${params.paralog_threads} \
-        --paralog-check-workers ${params.paralog_check_workers} \
+        --db-check-workers ${params.db_check_workers} \
         --ortholog-threads ${params.ortholog_threads} \
         --ksrates-command "${params.ksrates_command}" \
         --pair-scope ${params.pair_scope} \
