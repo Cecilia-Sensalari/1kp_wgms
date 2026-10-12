@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
 from pathlib import Path
 from typing import List
 
-from ksrates_batch_common import fail, make_ksrates_command
+from ksrates_batch_common import ks_database_has_data, make_ksrates_command
 
 
 def build_paralog_command(
@@ -41,10 +40,7 @@ def species_still_needs_paralog_ks(args: argparse.Namespace, config_path: Path) 
     tree) cheap: without it, paralogs_ks_commands.sh would always list every unique species again,
     submitting a job for species that already have everything they need.
 
-    check-paralog-db exits with 0 (present), 1 (missing, or database disabled in the expert config) or
-    2 (database requested but unreachable). Only 0 and 1 are answers; anything else stops the whole
-    run: treating "cannot tell" as "missing" would queue every species for recomputation while the
-    database server is down.
+    An unreachable database stops the whole run (see ks_database_has_data).
 
     :return: True if at least one requested analysis type is still missing for this species
              (a paralogs-ks command should be emitted for it), False only if every requested type
@@ -60,18 +56,7 @@ def species_still_needs_paralog_ks(args: argparse.Namespace, config_path: Path) 
     if not requested:
         return False
 
-    for analysis_type in requested:
-        command = build_check_paralog_db_command(args, config_path, analysis_type)
-        try:
-            result = subprocess.run(command, capture_output=True, text=True)
-        except OSError as error:
-            fail(f"could not run [{' '.join(command)}]: {error}")
-        if result.returncode == 1:
-            return True  # this analysis type is still missing for the species
-        if result.returncode != 0:
-            fail(
-                f"[{' '.join(command)}] exited with status {result.returncode} (2 = the Ks database "
-                f"is unreachable): {result.stderr.strip() or result.stdout.strip()}. Is the Ks database "
-                f"server running, and does the address file in the config point to it?"
-            )
-    return False
+    return not all(
+        ks_database_has_data(build_check_paralog_db_command(args, config_path, analysis_type))
+        for analysis_type in requested
+    )

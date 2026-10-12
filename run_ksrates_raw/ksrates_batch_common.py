@@ -10,9 +10,11 @@ import argparse
 import csv
 import re
 import shlex
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple, TypeVar
 
 
 @dataclass(frozen=True)
@@ -117,6 +119,49 @@ def canonical_pair(species_1: str, species_2: str) -> Tuple[str, str]:
 
 def make_ksrates_command(args: argparse.Namespace, command_args: Sequence[str]) -> List[str]:
     return shlex.split(args.ksrates_command) + list(command_args)
+
+
+def ks_database_has_data(command: Sequence[str]) -> bool:
+    """
+    Runs one 'ksrates check-paralog-db' / 'check-ortholog-db' command and interprets its exit
+    status: 0 = the data is in the Ks database (True), 1 = it is not, or the database is disabled
+    in the expert config (False). Anything else stops the whole run, in particular 2 = the Ks
+    database is requested but unreachable: treating "cannot tell" as "missing" would queue every
+    species/pair for recomputation while the database server is down.
+    """
+    try:
+        result = subprocess.run(list(command), capture_output=True, text=True)
+    except OSError as error:
+        fail(f"could not run [{' '.join(command)}]: {error}")
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    fail(
+        f"[{' '.join(command)}] exited with status {result.returncode} (2 = the Ks database is "
+        f"unreachable): {result.stderr.strip() or result.stdout.strip()}. Is the Ks database "
+        f"server running, and does the address file in the config point to it?"
+    )
+    return False  # unreachable: fail() always raises
+
+
+T = TypeVar("T")
+R = TypeVar("R")
+
+
+def map_checks_concurrently(function: Callable[[T], R], items: Sequence[T], workers: int) -> List[R]:
+    """
+    Runs function on every item in parallel threads, keeping the input order. The checks are small
+    network round trips to the sqld server, not CPU-bound, so they run concurrently - run serially
+    they would dominate wall-clock time when upscaling to thousands of species. If one raises (e.g. database
+    unreachable) the checks still queued are cancelled, since each would fail the same way.
+    """
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        try:
+            return list(executor.map(function, items))
+        except BaseException:
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
 
 
 def shell_join(parts: Sequence[str]) -> str:

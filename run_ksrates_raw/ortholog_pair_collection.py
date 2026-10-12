@@ -14,6 +14,7 @@ from ksrates_batch_common import (
     PairOccurrence,
     canonical_pair,
     fail,
+    ks_database_has_data,
     make_ksrates_command,
     normalize_column_name,
 )
@@ -193,8 +194,39 @@ def build_ortholog_analysis_command(
     return command
 
 
+def build_check_ortholog_db_command(
+    args: argparse.Namespace,
+    config_path: Path,
+    species_1: str,
+    species_2: str,
+) -> List[str]:
+    command = make_ksrates_command(args, ("check-ortholog-db", str(config_path), species_1, species_2))
+    if args.expert_config is not None:
+        command.extend(("--expert", str(args.expert_config)))
+    return command
+
+
+def pair_still_needs_ortholog_ks(
+    args: argparse.Namespace,
+    config_path: Path,
+    species_1: str,
+    species_2: str,
+) -> bool:
+    """
+    Checks the Ks database (via 'ksrates check-ortholog-db') for a species pair, to leave out of
+    orthologs_ks_commands.sh the pairs whose peak and Ks list are already stored, e.g. computed for
+    other datasets or by an earlier run. config_path must be a config containing both species.
+    An unreachable database stops the whole run (see ks_database_has_data).
+
+    :return: True if the pair still needs computing (orthologs-ks + orthologs-analysis), False if
+             both its peak and its Ks list are already in the database.
+    """
+    return not ks_database_has_data(build_check_ortholog_db_command(args, config_path, species_1, species_2))
+
+
 def global_pair_rows(
-    pair_to_occurrences: Dict[Tuple[str, str], List[PairOccurrence]]
+    pair_to_occurrences: Dict[Tuple[str, str], List[PairOccurrence]],
+    queued_pairs: Dict[Tuple[str, str], bool],
 ) -> Iterable[Tuple[object, ...]]:
     for (species_1, species_2), occurrences in sorted(
         pair_to_occurrences.items(),
@@ -213,6 +245,7 @@ def global_pair_rows(
             ",".join(focals),
             chosen.config_path,
             chosen.init_run_dir,
+            queued_pairs[(species_1, species_2)],
         )
 
 

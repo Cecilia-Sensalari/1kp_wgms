@@ -45,15 +45,24 @@ paralog_species_dedup.py (paralog species dedup).
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from dataset_inputs import ensure_species_known, read_datasets, read_species_metadata
-from ksrates_batch_common import ConfigRecord, PairOccurrence, canonical_pair, fail, safe_name, write_command_file, write_tsv
+from ksrates_batch_common import (
+    ConfigRecord,
+    PairOccurrence,
+    canonical_pair,
+    fail,
+    map_checks_concurrently,
+    safe_name,
+    write_command_file,
+    write_tsv,
+)
 from ksrates_config_writer import write_ksrates_config
 from ksrates_init_runner import build_init_command, run_init
 from ortholog_pair_collection import (
@@ -62,11 +71,25 @@ from ortholog_pair_collection import (
     collect_pairs_for_config,
     dataset_pair_rows,
     global_pair_rows,
+    pair_still_needs_ortholog_ks,
 )
 from paralog_species_dedup import build_paralog_command, species_still_needs_paralog_ks
 
 
 YES_NO = ("yes", "no")
+
+
+def default_db_check_workers() -> int:
+    """
+    Number of CPUs this process is allowed to run on (os.sched_getaffinity honours the CPU limits set by
+    SLURM, other schedulers, cgroups, taskset and container CPU sets), capped at 16 so a large machine
+    does not start dozens of simultaneous container + Python processes.
+    """
+    try:
+        usable_cpus = len(os.sched_getaffinity(0))
+    except AttributeError:  # not available on every platform
+        usable_cpus = os.cpu_count() or 1
+    return max(1, min(usable_cpus, 16))
 
 
 def parse_args() -> argparse.Namespace:
@@ -120,14 +143,15 @@ def parse_args() -> argparse.Namespace:
         help="Thread count to place in generated paralogs-ks command file.",
     )
     parser.add_argument(
-        "--paralog-check-workers",
+        "--db-check-workers",
         type=int,
-        default=16,
+        default=None,
         help=(
-            "Number of concurrent 'ksrates check-paralog-db' calls to run while filtering "
-            "already-populated species out of paralogs_ks_commands.sh. Each call is a small "
-            "network round trip to the sqld server, not CPU-bound, so this can comfortably "
-            "exceed the machine's core count."
+            "Number of concurrent 'ksrates check-paralog-db' / 'check-ortholog-db' calls to run while "
+            "filtering already-populated species and pairs out of paralogs_ks_commands.sh and "
+            "orthologs_ks_commands.sh. Each call starts a container and a Python process, so it "
+            "needs a CPU of its own. Default: the number of CPUs this process may use "
+            "(up to 16)."
         ),
     )
     parser.add_argument(
@@ -242,6 +266,8 @@ def require_database_enabled_in_expert_config(expert_config: Optional[Path]) -> 
 
 def main() -> None:
     args = parse_args()
+    if args.db_check_workers is None:
+        args.db_check_workers = default_db_check_workers()
     args.datasets = args.datasets.resolve()
     args.species_metadata = args.species_metadata.resolve()
     args.out_dir = args.out_dir.resolve()
@@ -407,6 +433,26 @@ def main() -> None:
         ),
     )
 
+    # Pairs whose peak and Ks list are already in the Ks database need no computation: a rerun after
+    # adding datasets only queues the genuinely new pairs. Without a database, every pair is queued.
+    ordered_pairs = sorted(pair_to_occurrences, key=lambda pair: (pair[0].lower(), pair[1].lower()))
+    chosen_by_pair = {
+        pair: sorted(
+            pair_to_occurrences[pair],
+            key=lambda item: (item.dataset_id, item.focal_species.lower(), str(item.config_path)),
+        )[0]
+        for pair in ordered_pairs
+    }
+    if args.ks_database_server_address_path is not None:
+        pair_check_results = map_checks_concurrently(
+            lambda pair: pair_still_needs_ortholog_ks(args, chosen_by_pair[pair].config_path, pair[0], pair[1]),
+            ordered_pairs,
+            args.db_check_workers,
+        )
+    else:
+        pair_check_results = [True] * len(ordered_pairs)
+    queued_pairs: Dict[Tuple[str, str], bool] = dict(zip(ordered_pairs, pair_check_results))
+
     write_tsv(
         ortholog_work_dir / "ortholog_pairs.tsv",
         (
@@ -416,8 +462,9 @@ def main() -> None:
             "focal_species",
             "chosen_config",
             "chosen_init_run_dir",
+            "queued",
         ),
-        global_pair_rows(pair_to_occurrences),
+        global_pair_rows(pair_to_occurrences, queued_pairs),
     )
 
     for dataset_id, occurrences in dataset_to_occurrences.items():
@@ -443,14 +490,10 @@ def main() -> None:
     # so it only ever processes the one pair just computed, not every pair that focal needs.
     ortholog_pairs_dir = ortholog_work_dir / "pairs"
     ortholog_commands = []
-    for (species_1, species_2), occurrences in sorted(
-        pair_to_occurrences.items(),
-        key=lambda item: (item[0][0].lower(), item[0][1].lower()),
-    ):
-        chosen = sorted(
-            occurrences,
-            key=lambda item: (item.dataset_id, item.focal_species.lower(), str(item.config_path)),
-        )[0]
+    for species_1, species_2 in ordered_pairs:
+        if not queued_pairs[(species_1, species_2)]:
+            continue
+        chosen = chosen_by_pair[(species_1, species_2)]
         pair_tsv_path = ortholog_pairs_dir / f"{species_1}_{species_2}.tsv"
         write_tsv(pair_tsv_path, ("Species1", "Species2"), [(species_1, species_2)])
         ortholog_commands.append(
@@ -488,19 +531,11 @@ def main() -> None:
         # run concurrently - run serially this would dominate wall-clock time at ~2000-species
         # scale even though every individual check is cheap.
         ordered_species = sorted(species_to_occurrences, key=str.lower)
-        with ThreadPoolExecutor(max_workers=args.paralog_check_workers) as executor:
-            try:
-                check_results = list(
-                    executor.map(
-                        lambda species: species_still_needs_paralog_ks(args, chosen_config_by_species[species]),
-                        ordered_species,
-                    )
-                )
-            except BaseException:
-                # A failed check (e.g. database unreachable) stops the run: do not wait for the
-                # checks still queued, each of which would fail the same way
-                executor.shutdown(wait=False, cancel_futures=True)
-                raise
+        check_results = map_checks_concurrently(
+            lambda species: species_still_needs_paralog_ks(args, chosen_config_by_species[species]),
+            ordered_species,
+            args.db_check_workers,
+        )
         queued_species: Dict[str, bool] = dict(zip(ordered_species, check_results))
 
         paralog_commands = []
