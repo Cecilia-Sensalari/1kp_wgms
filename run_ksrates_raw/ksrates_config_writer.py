@@ -15,8 +15,8 @@ def write_ksrates_config(
     focal_species: str,
     metadata: Dict[str, SpeciesRecord],
     args: argparse.Namespace,
-    peak_database_path: Path,
-    ks_list_database_path: Path,
+    peak_database_path: Optional[Path] = None,
+    ks_list_database_path: Optional[Path] = None,
     ks_database_server_address_path: Optional[Path] = None,
 ) -> None:
     records = [metadata[species] for species in dataset.leaves]
@@ -34,14 +34,17 @@ def write_ksrates_config(
     ]
     if focal_record.gff_filename:
         lines.append(f"gff_filename = {focal_record.gff_filename}")
-    lines.extend(
-        [
-            f"peak_database_path = {peak_database_path}",
-            f"ks_list_database_path = {ks_list_database_path}",
-        ]
-    )
+    # The Ks database server replaces the ortholog TSV files: with it, only its address is written, and
+    # without it, only the TSV paths (ksrates ignores the TSV paths when the database is used).
     if ks_database_server_address_path is not None:
         lines.append(f"ks_database_server_address_path = {ks_database_server_address_path}")
+    else:
+        lines.extend(
+            [
+                f"peak_database_path = {peak_database_path}",
+                f"ks_list_database_path = {ks_list_database_path}",
+            ]
+        )
     lines.extend(
         [
             "",

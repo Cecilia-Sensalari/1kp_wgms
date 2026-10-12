@@ -288,13 +288,18 @@ def main() -> None:
     database_root = args.out_dir / "databases"
     ortholog_work_dir = args.out_dir / "ortholog_runs"
     paralog_work_dir = args.out_dir / "paralog_runs"
-    database_root.mkdir(parents=True, exist_ok=True)
     ortholog_work_dir.mkdir(parents=True, exist_ok=True)
     if args.ks_database_server_address_path is not None:
         paralog_work_dir.mkdir(parents=True, exist_ok=True)
 
-    peak_database_path = database_root / "ortholog_peak_db.tsv"
-    ks_list_database_path = database_root / "ortholog_ks_list_db.tsv"
+    # The ortholog TSV databases are only used without the Ks database server (which stores that data itself),
+    # so databases/ is only created in that case
+    if args.ks_database_server_address_path is None:
+        database_root.mkdir(parents=True, exist_ok=True)
+        peak_database_path = database_root / "ortholog_peak_db.tsv"
+        ks_list_database_path = database_root / "ortholog_ks_list_db.tsv"
+    else:
+        peak_database_path = ks_list_database_path = None
 
     configs: List[ConfigRecord] = []
     for dataset in datasets:
