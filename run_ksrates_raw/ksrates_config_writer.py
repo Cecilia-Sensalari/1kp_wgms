@@ -17,7 +17,7 @@ def write_ksrates_config(
     args: argparse.Namespace,
     peak_database_path: Path,
     ks_list_database_path: Path,
-    paralog_database_path: Optional[Path] = None,
+    ks_database_server_address_path: Optional[Path] = None,
 ) -> None:
     records = [metadata[species] for species in dataset.leaves]
     focal_record = metadata[focal_species]
@@ -40,8 +40,8 @@ def write_ksrates_config(
             f"ks_list_database_path = {ks_list_database_path}",
         ]
     )
-    if paralog_database_path is not None:
-        lines.append(f"ks_database_server_address_path = {paralog_database_path}")
+    if ks_database_server_address_path is not None:
+        lines.append(f"ks_database_server_address_path = {ks_database_server_address_path}")
     lines.extend(
         [
             "",

@@ -7,7 +7,7 @@
  * prepare_branch_ksrates_configs.py from ../run_ksrates_raw).
  *
  * Does NOT launch/stop the paralog Ks sqld server - that stays its own independent,
- * long-running process; point --paralog_database at its already-running address file.
+ * long-running process; point --ks_database_server_address_path at its already-running address file.
  * Does NOT execute any of the generated commands (ksrates init/orthologs-ks/paralogs-ks stay a
  * separate, later, separately-parallelized step) unless --run_init is explicitly turned on.
  */
@@ -34,7 +34,7 @@ params.min_species = 3
 params.busco_weight = 0.8
 params.transrate_weight = 0.2
 // If set, keep only the first N rows of the generated dataset list - for quick end-to-end
-// testing (e.g. with --run_init and --paralog_database also on) without paying for the full
+// testing (e.g. with --run_init and --ks_database_server_address_path also on) without paying for the full
 // ~2354-dataset tree. Unset (null) by default: full real run, unaffected.
 params.test_max_datasets = null
 
@@ -45,7 +45,7 @@ params.test_max_datasets = null
 params.ksrates_sif = '/group/esb/cesen/1kp/software/ksrates_a6822fe_20261007.sif'
 params.ksrates_code_dir = '/group/esb/cesen/1kp/code/ksrates'
 params.expert_config = null
-params.paralog_database = null
+params.ks_database_server_address_path = null
 params.paralog_threads = 4
 params.paralog_check_workers = 16
 params.ortholog_threads = 4
@@ -116,14 +116,14 @@ SCRIPT_DIR = "${workflow.projectDir}/../run_ksrates_raw"
 // when actually needed. Mirrors ks_analysis/test_subtree/nextflow.config's shape (singularity
 // profile + per-process resource withName blocks) but points at our own local container/bind
 // mounts instead of the public vibpsb/ksrates:latest image, and is rewritten fresh on every run
-// so a changed --paralog_database/--transcriptomes_dir is always reflected.
+// so a changed --ks_database_server_address_path/--transcriptomes_dir is always reflected.
 if (params.execute_real_pipelines) {
     bind_mounts = [base_dir.toString(), params.transcriptomes_dir]
     if (params.ksrates_code_dir) {
         bind_mounts << params.ksrates_code_dir
     }
-    if (params.paralog_database) {
-        bind_mounts << file(params.paralog_database).getParent().toString()
+    if (params.ks_database_server_address_path) {
+        bind_mounts << file(params.ks_database_server_address_path).getParent().toString()
     }
     bind_options = bind_mounts.unique().collect { "-B ${it}" }.join(' ')
 
@@ -174,7 +174,7 @@ log.info """
          tree:               ${params.tree}
          species_table:      ${params.species_table}
          expert_config:      ${params.expert_config ?: '(none)'}
-         paralog_database:   ${params.paralog_database ?: '(none)'}
+         ks_database_server_address_path:  ${params.ks_database_server_address_path ?: '(none)'}
          run_init:           ${params.run_init}
          test_max_datasets:  ${params.test_max_datasets ?: '(none - full run)'}
          execute_ortholog_jobs: ${params.execute_ortholog_jobs}
@@ -280,7 +280,7 @@ process generateDatasetList {
 /*
  * Generates one ksrates config per (dataset, focal species) under base_dir/datasets/<hash>/,
  * plus the deduplicated command files (init_commands.sh, orthologs_ks_commands.sh, and
- * paralogs_ks_commands.sh if --paralog_database is set). Depends on both processes above;
+ * paralogs_ks_commands.sh if --ks_database_server_address_path is set). Depends on both processes above;
  * Nextflow waits for both automatically via the input channels below.
  */
 process prepareConfigs {
@@ -297,7 +297,7 @@ process prepareConfigs {
 
     script:
     expert_arg = params.expert_config ? "--expert-config ${params.expert_config}" : ""
-    paralog_db_arg = params.paralog_database ? "--paralog-database ${params.paralog_database}" : ""
+    ks_db_arg = params.ks_database_server_address_path ? "--ks-database-server-address-path ${params.ks_database_server_address_path}" : ""
     run_init_arg = params.run_init ? "--run-init" : ""
     keep_relative_arg = params.keep_relative_paths ? "--keep-relative-paths" : ""
     """
@@ -306,7 +306,7 @@ process prepareConfigs {
         --species-metadata ${species_metadata} \
         --out-dir ${base_dir} \
         ${expert_arg} \
-        ${paralog_db_arg} \
+        ${ks_db_arg} \
         --paralog-threads ${params.paralog_threads} \
         --paralog-check-workers ${params.paralog_check_workers} \
         --ortholog-threads ${params.ortholog_threads} \

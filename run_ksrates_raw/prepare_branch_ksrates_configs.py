@@ -102,11 +102,11 @@ def parse_args() -> argparse.Namespace:
         help="Optional ksrates expert config passed to init/orthologs-ks/paralogs-ks.",
     )
     parser.add_argument(
-        "--paralog-database",
+        "--ks-database-server-address-path",
         type=Path,
         default=None,
         help=(
-            "Path to the paralog Ks sqld server's address file. When given, every generated "
+            "Path to the Ks database (sqld) server's address file, serving paralog and ortholog Ks data. When given, every generated "
             "config gets a ks_database_server_address_path line pointed at it, and a "
             "paralogs_ks_commands.sh is written with one deduplicated 'paralogs-ks' command per "
             "unique species across all datasets (mirrors the existing ortholog-pair dedup). The "
@@ -234,7 +234,7 @@ def require_database_enabled_in_expert_config(expert_config: Optional[Path]) -> 
     silently run without the database, so stop here instead.
     """
     if expert_config is None:
-        fail("--paralog-database requires --expert-config, whose [EXPERT PARAMETERS] must set use_ks_database_server = yes")
+        fail("--ks-database-server-address-path requires --expert-config, whose [EXPERT PARAMETERS] must set use_ks_database_server = yes")
     enabled = re.search(r"^\s*use_ks_database_server\s*=\s*yes\s*$", expert_config.read_text(), re.IGNORECASE | re.MULTILINE)
     if not enabled:
         fail(f"{expert_config} does not set use_ks_database_server = yes, so ksrates would ignore the Ks database")
@@ -247,8 +247,8 @@ def main() -> None:
     args.out_dir = args.out_dir.resolve()
     if args.expert_config is not None:
         args.expert_config = args.expert_config.resolve()
-    if args.paralog_database is not None:
-        args.paralog_database = args.paralog_database.resolve()
+    if args.ks_database_server_address_path is not None:
+        args.ks_database_server_address_path = args.ks_database_server_address_path.resolve()
         require_database_enabled_in_expert_config(args.expert_config)
 
     metadata = read_species_metadata(args.species_metadata, args.keep_relative_paths)
@@ -264,7 +264,7 @@ def main() -> None:
     paralog_work_dir = args.out_dir / "paralog_runs"
     database_root.mkdir(parents=True, exist_ok=True)
     ortholog_work_dir.mkdir(parents=True, exist_ok=True)
-    if args.paralog_database is not None:
+    if args.ks_database_server_address_path is not None:
         paralog_work_dir.mkdir(parents=True, exist_ok=True)
 
     peak_database_path = database_root / "ortholog_peak_db.tsv"
@@ -313,7 +313,7 @@ def main() -> None:
                 args,
                 peak_database_path,
                 ks_list_database_path,
-                paralog_database_path=args.paralog_database,
+                ks_database_server_address_path=args.ks_database_server_address_path,
             )
             configs.append(
                 ConfigRecord(
@@ -471,7 +471,7 @@ def main() -> None:
     # names elsewhere). Without this, feeding every (dataset, focal) config to paralogs-ks-multi
     # would launch one paralogs-ks call per dataset a species appears in, not once per species -
     # exactly the duplicate-computation race this preparation step exists to avoid.
-    if args.paralog_database is not None:
+    if args.ks_database_server_address_path is not None:
         species_to_occurrences: Dict[str, List[ConfigRecord]] = defaultdict(list)
         for config in configs:
             species_to_occurrences[config.focal_species].append(config)

@@ -12,7 +12,7 @@ source /group/esb/cesen/.venv/venv_python_11/bin/activate
 
 SIF=/group/esb/cesen/1kp/software/ksrates_a6822fe_20261007.sif
 KSRATES_RAW=/group/esb/cesen/1kp/ks_analysis/1kp/ksrates_raw
-PARALOG_DB=$KSRATES_RAW/ks_database/ks_database_server_address.txt
+KS_DB=$KSRATES_RAW/ks_database/ks_database_server_address.txt
 
 python /group/esb/cesen/1kp/code/1kp_wgms/run_ksrates_raw/prepare_branch_ksrates_configs.py \
   --datasets "$KSRATES_RAW/branch_subtrees.tsv" \
@@ -21,7 +21,7 @@ python /group/esb/cesen/1kp/code/1kp_wgms/run_ksrates_raw/prepare_branch_ksrates
   --expert-config "$KSRATES_RAW/config_expert.txt" \
   --ksrates-command "singularity exec -B /group/esb/cesen/1kp --env PYTHONPATH=/group/esb/cesen/1kp/code/ksrates $SIF ksrates" \
   --paranome yes \
-  --paralog-database "$PARALOG_DB" \
+  --ks-database-server-address-path "$KS_DB" \
   --max-outgroups 4
   # --run-init intentionally omitted here: running "ksrates init" for all ~2354 branches in one
   # job would be far too slow/long-running for a single SBATCH job. Once configs look right,
