@@ -41,7 +41,7 @@ def write_ksrates_config(
         ]
     )
     if paralog_database_path is not None:
-        lines.append(f"ks_list_paralog_database_path = {paralog_database_path}")
+        lines.append(f"ks_database_server_address_path = {paralog_database_path}")
     lines.extend(
         [
             "",

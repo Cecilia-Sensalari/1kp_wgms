@@ -45,11 +45,12 @@ paralog_species_dedup.py (paralog species dedup).
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from dataset_inputs import ensure_species_known, read_datasets, read_species_metadata
 from ksrates_batch_common import ConfigRecord, PairOccurrence, canonical_pair, fail, safe_name, write_command_file, write_tsv
@@ -106,10 +107,10 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Path to the paralog Ks sqld server's address file. When given, every generated "
-            "config gets a ks_list_paralog_database_path line pointed at it, and a "
+            "config gets a ks_database_server_address_path line pointed at it, and a "
             "paralogs_ks_commands.sh is written with one deduplicated 'paralogs-ks' command per "
             "unique species across all datasets (mirrors the existing ortholog-pair dedup). The "
-            "paired expert config (--expert-config) must set use_paralog_ks_database = yes."
+            "paired expert config (--expert-config) must set use_ks_database_server = yes."
         ),
     )
     parser.add_argument(
@@ -226,6 +227,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def require_database_enabled_in_expert_config(expert_config: Optional[Path]) -> None:
+    """
+    The Ks database is only used if the expert config sets use_ks_database_server = yes. Without it
+    ksrates ignores the database address written into the generated configs, and everything would
+    silently run without the database, so stop here instead.
+    """
+    if expert_config is None:
+        fail("--paralog-database requires --expert-config, whose [EXPERT PARAMETERS] must set use_ks_database_server = yes")
+    enabled = re.search(r"^\s*use_ks_database_server\s*=\s*yes\s*$", expert_config.read_text(), re.IGNORECASE | re.MULTILINE)
+    if not enabled:
+        fail(f"{expert_config} does not set use_ks_database_server = yes, so ksrates would ignore the Ks database")
+
+
 def main() -> None:
     args = parse_args()
     args.datasets = args.datasets.resolve()
@@ -235,6 +249,7 @@ def main() -> None:
         args.expert_config = args.expert_config.resolve()
     if args.paralog_database is not None:
         args.paralog_database = args.paralog_database.resolve()
+        require_database_enabled_in_expert_config(args.expert_config)
 
     metadata = read_species_metadata(args.species_metadata, args.keep_relative_paths)
     datasets = read_datasets(args.datasets)
@@ -474,12 +489,18 @@ def main() -> None:
         # scale even though every individual check is cheap.
         ordered_species = sorted(species_to_occurrences, key=str.lower)
         with ThreadPoolExecutor(max_workers=args.paralog_check_workers) as executor:
-            check_results = list(
-                executor.map(
-                    lambda species: species_still_needs_paralog_ks(args, chosen_config_by_species[species]),
-                    ordered_species,
+            try:
+                check_results = list(
+                    executor.map(
+                        lambda species: species_still_needs_paralog_ks(args, chosen_config_by_species[species]),
+                        ordered_species,
+                    )
                 )
-            )
+            except BaseException:
+                # A failed check (e.g. database unreachable) stops the run: do not wait for the
+                # checks still queued, each of which would fail the same way
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
         queued_species: Dict[str, bool] = dict(zip(ordered_species, check_results))
 
         paralog_commands = []
