@@ -15,100 +15,29 @@
 LOG_OUTPUT = true
 
 /*
- * Pipeline input parameters
+ * Configuration: all parameters (params.*) and all process settings (executor, memory, CPUs, time,
+ * concurrency, error handling, module loads) live in nextflow.config, not in this script. The
+ * nextflow.config next to this script holds the defaults; each analysis puts its own
+ * nextflow.config in the directory the pipeline is launched from, with only what differs.
+ * Values that depend on other settings are derived here, since a config file cannot re-derive them
+ * after another config file has overridden a base value.
  */
-
-params.base_dir = null  // required: output base directory, e.g. /group/esb/cesen/1kp/ks_analysis/1kp
-
-// generate_species_metadata.py passthrough (defaults match that script's own hardcoded constants)
-params.species_table = "/group/esb/cesen/1kp/source_data/1.species_dataset/1kp_paper_2019_suptab1_species.tsv"
-params.transcriptomes_dir = "/group/esb/cesen/1kp/source_data/2.transcriptomes/1kp/cngb_transcriptomes"
-
-// make_branch_subtrees.py passthrough (defaults match that script's own argparse defaults)
-params.tree = "/group/esb/cesen/1kp/source_data/3.phylogenetic_tree/1kp_trees/astral_trees_33_percent-FAA_estimated_species_tree.rooted.wgm_suptab3_mrca.nhx.manual_fixes.tree"
-params.score_table = "/group/esb/cesen/1kp/source_data/1.species_dataset/1kp_paper_2019_suptab1_species.tsv"
-params.max_a = 4
-params.max_older = 2
-params.older_clades = 3
-params.min_species = 3
-params.busco_weight = 0.8
-params.transrate_weight = 0.2
-// If set, keep only the first N rows of the generated dataset list - for quick end-to-end
-// testing (e.g. with --run_init and --ks_database_server_address_path also on) without paying for the full
-// ~2354-dataset tree. Unset (null) by default: full real run, unaffected.
-params.test_max_datasets = null
-
-// prepare_branch_ksrates_configs.py passthrough (defaults match that script's own argparse defaults)
-// ksrates container image, plus the local ksrates checkout put first on PYTHONPATH inside it so the
-// not-yet-released code (unified Ks database) is used instead of the older code baked into the image.
-// Blank this default (ksrates_code_dir) once an image built from the current code is used.
-params.ksrates_sif = '/group/esb/cesen/1kp/software/ksrates_a6822fe_20261007.sif'
-params.ksrates_code_dir = '/group/esb/cesen/1kp/code/ksrates'
-params.expert_config = null
-params.ks_database_server_address_path = null
-params.paralog_threads = 4
-params.db_check_workers = 16
-params.ortholog_threads = 4
-params.ksrates_command = "singularity exec -B /group/esb/cesen/1kp ${params.ksrates_code_dir ? '--env PYTHONPATH=' + params.ksrates_code_dir + ' ' : ''}${params.ksrates_sif} ksrates"
-params.pair_scope = "init-pairs"
-params.max_outgroups = 4
-params.consensus_mode = "mean among outgroups"
-params.paranome = "yes"
-params.collinearity = "no"
-params.reciprocal_retention = "no"
-params.gff_feature = "mrna"
-params.gff_attribute = "id"
-params.num_bootstrap_iterations = 200
-params.max_ks_paralogs = "5"
-params.max_ks_orthologs = "10"
-params.keep_relative_paths = false
-// Actually execute "ksrates init" for every generated config inline. Off by default: running
-// init for all ~2354 real datasets in one step would be far too slow (see
-// launchers/launch_ortholog_ks.sh's own comment) - init_commands.sh is still generated either
-// way, for running separately, split across many parallel jobs.
-params.run_init = false
-
-// Actually submit orthologs_ks_commands.sh / paralogs_ks_commands.sh as native Nextflow array
-// jobs on the slurm executor, instead of leaving them for a human to run manually. Off by
-// default; independently controllable since you might want to launch one without the other.
-// ksrates init (run_init/init_commands.sh above) is explicitly NOT covered by these flags - it
-// keeps its current inline, sequential behavior for now.
-params.execute_ortholog_jobs = false
-params.execute_paralog_jobs = false
-params.ortholog_job_memory = '4GB'
-params.paralog_job_memory = '8GB'  // paralogs-ks is the heavier of the two
-params.ortholog_job_concurrency = 25
-params.paralog_job_concurrency = 25
-
-// Stage 4: actually launch the "real" per-(dataset, focal) ksrates pipeline (nextflow run
-// VIB-PSB/ksrates) for every row in config_manifest.tsv, now that the shared paralog/ortholog
-// Ks data has already been populated by the jobs above. Deliberately NOT auto-gated on
-// execute_ortholog_jobs/execute_paralog_jobs finishing in the same invocation - this is its own,
-// separately-triggered step, run once you've checked Stage 2/3's results yourself.
-params.execute_real_pipelines = false
-// Local checkout's main.nf, not yet "VIB-PSB/ksrates" pulled from GitHub.
-// Revisit once consolidated code is tagged/released.
-params.ksrates_main_nf = '/group/esb/cesen/1kp/code/ksrates/main.nf'
-params.ksrates_container = params.ksrates_sif
-params.real_pipeline_concurrency = 25
-params.real_pipeline_time = '04:00:00'
 
 if (!params.base_dir) {
     error "base_dir is required, e.g. --base_dir /group/esb/cesen/1kp/ks_analysis/1kp"
 }
 base_dir = file(params.base_dir)
 
+// Full 'ksrates' command line used by prepare_branch_ksrates_configs.py (init, orthologs-ks, paralogs-ks,
+// check-*-db): the container, with the local ksrates checkout first on PYTHONPATH if ksrates_code_dir is set
+ksrates_command = params.ksrates_command ?: "singularity exec -B /group/esb/cesen/1kp ${params.ksrates_code_dir ? '--env PYTHONPATH=' + params.ksrates_code_dir + ' ' : ''}${params.ksrates_sif} ksrates"
+ksrates_container = params.ksrates_container ?: params.ksrates_sif
+
 if (params.execute_real_pipelines && !params.expert_config) {
     error "execute_real_pipelines requires --expert_config (it needs use_ks_database_server " +
         "= yes to actually benefit from the already-populated database, rather than silently " +
         "recomputing everything from scratch)"
 }
-
-// Same Python environment used by the existing launcher scripts (e.g.
-// 1kp_wgms/launchers/launch_prepare_configs_test.sh) - these are plain host-side Python
-// scripts, not run inside the ksrates container (only the "ksrates" subcommands prepareConfigs
-// shells out to, via --ksrates-command, run inside the container).
-PYTHON_SETUP = "module load python/x86_64/3.11.4 && source /group/esb/cesen/.venv/venv_python_11/bin/activate"
 
 SCRIPT_DIR = "${workflow.projectDir}/../run_ksrates_raw"
 
@@ -139,30 +68,8 @@ profiles {
     }
 }
 
-executor {
-    name = 'slurm'
-}
-
 process {
-    container = '${params.ksrates_container}'
-
-    withName: 'wgdParalogs' {
-        cpus = ${params.paralog_threads}
-        memory = '${params.paralog_job_memory}'
-    }
-    withName: 'wgdOrthologs' {
-        cpus = ${params.ortholog_threads}
-        memory = '${params.ortholog_job_memory}'
-    }
-    withName: 'estimatePeaks' {
-        memory = '4GB'
-    }
-    withName: 'paralogsAnalyses' {
-        memory = '8GB'
-    }
-    withName: 'plotOrthologDistrib' {
-        memory = '2GB'
-    }
+    container = '${ksrates_container}'
 }
 """.stripIndent()
 }
@@ -186,26 +93,32 @@ log.info """
 
 
 workflow {
+    // 1) Get metadata per species
     generateSpeciesMetadata()
+    // 2) Organize species in datasets
     generateDatasetList()
+    // 3) Make config per species and writes cmd to be run
     prepareConfigs(generateSpeciesMetadata.out.species_metadata, generateDatasetList.out.dataset_list)
     prepareConfigs.out.summary.view()
 
     // Gated behind prepareConfigs.out.summary (not a bare Channel.fromPath on the command file)
     // so Nextflow waits for prepareConfigs to actually finish writing it first - these files
     // aren't Nextflow outputs themselves, just plain paths on disk.
+    // 4) Compute and store ortholog data
     if (params.execute_ortholog_jobs) {
         ortholog_commands = prepareConfigs.out.summary
             .flatMap { file("${base_dir}/orthologs_ks_commands.sh").readLines() }
             .filter { line -> line.trim() && !line.startsWith('#') && line.trim() != 'set -euo pipefail' }
         runOrthologJob(ortholog_commands)
     }
+    // 5) Compute and store paralog data
     if (params.execute_paralog_jobs) {
         paralog_commands = prepareConfigs.out.summary
             .flatMap { file("${base_dir}/paralogs_ks_commands.sh").readLines() }
             .filter { line -> line.trim() && !line.startsWith('#') && line.trim() != 'set -euo pipefail' }
         runParalogJob(paralog_commands)
     }
+    // 6) Execute ksrates pipelines
     if (params.execute_real_pipelines) {
         real_pipeline_rows = prepareConfigs.out.summary
             .flatMap { file("${base_dir}/config_manifest.tsv").readLines().drop(1) }
@@ -223,8 +136,6 @@ workflow {
  */
 process generateSpeciesMetadata {
 
-    executor 'local'
-    beforeScript PYTHON_SETUP
 
     output:
         env SPECIES_METADATA, emit: species_metadata
@@ -247,8 +158,6 @@ process generateSpeciesMetadata {
  */
 process generateDatasetList {
 
-    executor 'local'
-    beforeScript PYTHON_SETUP
 
     output:
         env DATASET_LIST, emit: dataset_list
@@ -285,8 +194,6 @@ process generateDatasetList {
  */
 process prepareConfigs {
 
-    executor 'local'
-    beforeScript PYTHON_SETUP
 
     input:
         val species_metadata
@@ -298,6 +205,7 @@ process prepareConfigs {
     script:
     expert_arg = params.expert_config ? "--expert-config ${params.expert_config}" : ""
     ks_db_arg = params.ks_database_server_address_path ? "--ks-database-server-address-path ${params.ks_database_server_address_path}" : ""
+    db_check_workers_arg = params.db_check_workers ? "--db-check-workers ${params.db_check_workers}" : ""
     run_init_arg = params.run_init ? "--run-init" : ""
     keep_relative_arg = params.keep_relative_paths ? "--keep-relative-paths" : ""
     """
@@ -308,9 +216,9 @@ process prepareConfigs {
         ${expert_arg} \
         ${ks_db_arg} \
         --paralog-threads ${params.paralog_threads} \
-        --db-check-workers ${params.db_check_workers} \
+        ${db_check_workers_arg} \
         --ortholog-threads ${params.ortholog_threads} \
-        --ksrates-command "${params.ksrates_command}" \
+        --ksrates-command "${ksrates_command}" \
         --pair-scope ${params.pair_scope} \
         --max-outgroups ${params.max_outgroups} \
         --consensus-mode "${params.consensus_mode}" \
@@ -335,15 +243,6 @@ process prepareConfigs {
  */
 process runOrthologJob {
 
-    executor 'slurm'
-    // A failing pair (e.g. too divergent for max_ks_orthologs, see batch_ksrates docs/notes)
-    // shouldn't abort the whole batch - this job family is expected to have some unavoidable
-    // failures at ~2354-dataset scale. Rerun with -resume later to retry just the failed ones
-    // once addressed (or accept them as permanently uncomputable under current settings).
-    errorStrategy 'ignore'
-    maxForks params.ortholog_job_concurrency
-    cpus params.ortholog_threads
-    memory params.ortholog_job_memory
 
     input:
         val command_line
@@ -362,13 +261,6 @@ process runOrthologJob {
  */
 process runParalogJob {
 
-    executor 'slurm'
-    // Same reasoning as runOrthologJob's errorStrategy above: don't let one bad species abort
-    // the whole batch.
-    errorStrategy 'ignore'
-    maxForks params.paralog_job_concurrency
-    cpus params.paralog_threads
-    memory params.paralog_job_memory
 
     input:
         val command_line
@@ -392,12 +284,6 @@ process runParalogJob {
 process runRealPipeline {
 
     tag "${dataset_id}/${focal_species}"
-    executor 'slurm'
-    errorStrategy 'ignore'
-    maxForks params.real_pipeline_concurrency
-    time params.real_pipeline_time
-    memory '2GB'
-    beforeScript "module load nextflow"
 
     input:
         tuple val(dataset_id), val(focal_species), val(config_path), val(init_run_dir)
@@ -408,6 +294,7 @@ process runRealPipeline {
     nextflow run ${params.ksrates_main_nf} -profile singularity \
         --config ${config_path} \
         --expert ${params.expert_config} \
-        -c ${base_dir}/ksrates_run.nextflow.config
+        -c ${base_dir}/ksrates_run.nextflow.config \
+        -c ${params.ksrates_run_config}
     """
 }
