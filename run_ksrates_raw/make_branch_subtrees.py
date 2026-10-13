@@ -397,22 +397,31 @@ def merge_branches_into_datasets(
 def main() -> None:
     args = parse_args()
 
-    print("Loading 1KP tree...")
+    print("Loading 1KP tree...", flush=True)
     tree = load_tree(args.tree)
+    print(f"Tree loaded: {len(tree.get_leaf_names())} species", flush=True)
+    
+    print("Loading quality scores (1KP table and genome BUSCO)...", flush=True)
     scores = load_quality_scores(args)
+    print(f"Quality scores loaded for {len(scores)} species", flush=True)
 
     datasets_out = args.datasets_out or args.out.with_name("subtree_datasets.tsv")
     args.out.parent.mkdir(parents=True, exist_ok=True)
     datasets_out.parent.mkdir(parents=True, exist_ok=True)
 
+    print("Selecting species and pruning a subtree for every branch...", flush=True)
     branch_rows: List[List[str]] = []
     for row in rows_for_tree(tree, args, scores):
         branch_rows.append(row)
+        if len(branch_rows) % 100 == 0:
+            print(f"  {len(branch_rows)} branches done", flush=True)
         if args.max_datasets is not None and len(branch_rows) >= args.max_datasets:
             break
 
+    print("Merging branches with the same species set into datasets...", flush=True)
     dataset_rows = merge_branches_into_datasets(branch_rows, leaf_order(tree))
 
+    print("Writing the tables...", flush=True)
     for path, columns, rows in (
         (args.out, BRANCH_COLUMNS, branch_rows),
         (datasets_out, DATASET_COLUMNS, dataset_rows),
