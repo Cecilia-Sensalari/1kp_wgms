@@ -11,7 +11,7 @@ The script expects two small TSV files:
 1. A species metadata table with at least:
       species    fasta_filename
    Optional columns:
-      latin_name    gff_filename
+      latin_name    gff_filename    gff_feature    gff_attribute
 
 2. A dataset table with at least:
       dataset_id    newick_tree
@@ -199,8 +199,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--collinearity",
         choices=YES_NO,
-        default="no",
-        help="Value for ksrates collinearity setting in generated configs.",
+        default="yes",
+        help=(
+            "Value for ksrates collinearity setting, used for focal species that have a GFF; "
+            "focal species without one (transcriptomes) always get no."
+        ),
     )
     parser.add_argument(
         "--reciprocal-retention",

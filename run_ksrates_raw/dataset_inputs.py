@@ -26,6 +26,8 @@ def read_species_metadata(path: Path, keep_relative_paths: bool) -> Dict[str, Sp
     )
     latin_col = column_name(fieldnames, ("latin_name", "latin_names", "scientific_name"), False)
     gff_col = column_name(fieldnames, ("gff_filename", "gff", "gff3", "annotation_gff"), False)
+    feature_col = column_name(fieldnames, ("gff_feature",), False)
+    attribute_col = column_name(fieldnames, ("gff_attribute",), False)
 
     base_dir = path.parent.resolve()
     metadata: Dict[str, SpeciesRecord] = {}
@@ -47,6 +49,8 @@ def read_species_metadata(path: Path, keep_relative_paths: bool) -> Dict[str, Sp
             latin_name=latin or species,
             fasta_filename=fasta,
             gff_filename=gff,
+            gff_feature=row.get(feature_col, "").strip() if feature_col else "",
+            gff_attribute=row.get(attribute_col, "").strip() if attribute_col else "",
         )
     return metadata
 

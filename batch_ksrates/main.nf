@@ -145,6 +145,7 @@ process generateSpeciesMetadata {
     python3 ${SCRIPT_DIR}/generate_species_metadata.py \
         --species-table ${params.species_table} \
         --transcriptomes-dir ${params.transcriptomes_dir} \
+        --genome-gff-settings ${params.genome_gff_settings} \
         --output ${base_dir}/species_metadata.tsv
     SPECIES_METADATA=${base_dir}/species_metadata.tsv
     """

@@ -23,6 +23,8 @@ class SpeciesRecord:
     latin_name: str
     fasta_filename: str
     gff_filename: str = ""
+    gff_feature: str = ""
+    gff_attribute: str = ""
 
 
 @dataclass(frozen=True)

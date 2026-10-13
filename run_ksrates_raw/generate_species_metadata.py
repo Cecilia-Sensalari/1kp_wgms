@@ -10,12 +10,17 @@ Species with no transcriptome are filled in from the genome manifest
 (genome_species_manifest.tsv, under source_data/2.genomes/1kp/) where available - a
 species with both a transcriptome and a genome manifest entry always prefers the
 transcriptome. Species with neither are reported, not silently dropped.
+
+For the genome species the table also gets the GFF feature and attribute that identify their genes in the GFF
+(columns gff_feature and gff_attribute), read from genome_gff_settings.tsv. They are written into the ksrates
+config of each focal species. They stay empty for transcriptomes.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import sys
 from pathlib import Path
 
 
@@ -29,6 +34,9 @@ GENOME_MANIFEST = Path(
     "/group/esb/cesen/1kp/source_data/2.genomes/1kp/genome_species_manifest.tsv"
 )
 FASTA_SUFFIX = "-translated-nucleotides.fa"
+GENOME_GFF_SETTINGS = Path(
+    "/group/esb/cesen/1kp/source_data/2.genomes/1kp/genome_gff_settings.tsv"
+)
 OUTPUT_PATH = Path("/group/esb/cesen/1kp/ks_analysis/1kp/species_metadata.tsv")
 
 
@@ -77,11 +85,26 @@ def read_genome_manifest(path: Path) -> dict[str, tuple[str, str, str]]:
     return manifest
 
 
+def read_genome_gff_settings(path: Path) -> dict[str, tuple[str, str]]:
+    """Map species_id -> (gff_feature, gff_attribute) from genome_gff_settings.tsv (both empty = no GFF)."""
+    settings: dict[str, tuple[str, str]] = {}
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        for row in csv.DictReader(handle, delimiter="\t"):
+            species_id = (row.get("species_id") or "").strip()
+            if species_id:
+                settings[species_id] = (
+                    (row.get("gff_feature") or "").strip(),
+                    (row.get("gff_attribute") or "").strip(),
+                )
+    return settings
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--species-table", type=Path, default=SPECIES_TABLE)
     parser.add_argument("--transcriptomes-dir", type=Path, default=TRANSCRIPTOMES_DIR)
     parser.add_argument("--genome-manifest", type=Path, default=GENOME_MANIFEST)
+    parser.add_argument("--genome-gff-settings", type=Path, default=GENOME_GFF_SETTINGS)
     parser.add_argument("--output", type=Path, default=OUTPUT_PATH)
     return parser.parse_args()
 
@@ -92,6 +115,7 @@ def main() -> None:
     species_by_id = read_species_table(args.species_table)
     fastas_by_id = find_transcriptome_fastas(args.transcriptomes_dir)
     genome_manifest = read_genome_manifest(args.genome_manifest)
+    gff_settings = read_genome_gff_settings(args.genome_gff_settings)
 
     known_ids = set(species_by_id)
     transcriptome_ids = set(fastas_by_id)
@@ -104,19 +128,33 @@ def main() -> None:
     genome_usable_ids = sorted(missing_fasta & set(genome_manifest))
     still_missing = sorted(missing_fasta - set(genome_manifest))
 
+    # Fail fast: every genome species used must have its feature and attribute (empty for no GFF), and a
+    # species with a GFF must have both
+    for sample_id in genome_usable_ids:
+        feature, attribute = gff_settings.get(sample_id, (None, None))
+        has_gff = bool(genome_manifest[sample_id][2])
+        if feature is None:
+            sys.exit(f"ERROR: genome species {sample_id} is not in {args.genome_gff_settings}")
+        if has_gff != bool(feature and attribute) or (bool(feature) != bool(attribute)):
+            sys.exit(
+                f"ERROR: genome species {sample_id}: GFF path {'set' if has_gff else 'empty'} but "
+                f"gff_feature/gff_attribute are [{feature}]/[{attribute}] in {args.genome_gff_settings}"
+            )
+
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", newline="") as handle:
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
-        writer.writerow(["species", "fasta_filename", "latin_name", "gff_filename"])
+        writer.writerow(["species", "fasta_filename", "latin_name", "gff_filename", "gff_feature", "gff_attribute"])
         for sample_id in transcriptome_usable_ids:
             # Append the 4-letter sample ID to the latin name (e.g. "Genus species AAXJ") so it
             # stays unique and traceable back to its source sample even when two different
             # samples share the same latin species name.
             latin_name = f"{species_by_id[sample_id]} {sample_id}"
-            writer.writerow([sample_id, str(fastas_by_id[sample_id]), latin_name, ""])
+            writer.writerow([sample_id, str(fastas_by_id[sample_id]), latin_name, "", "", ""])
         for sample_id in genome_usable_ids:
             latin_name, cds_filepath, gff_filepath = genome_manifest[sample_id]
-            writer.writerow([sample_id, cds_filepath, latin_name, gff_filepath])
+            feature, attribute = gff_settings[sample_id]
+            writer.writerow([sample_id, cds_filepath, latin_name, gff_filepath, feature, attribute])
 
     total = len(transcriptome_usable_ids) + len(genome_usable_ids)
     print(
