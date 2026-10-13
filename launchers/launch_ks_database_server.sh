@@ -1,10 +1,11 @@
 #!/bin/bash
-# Launches the dedicated Ks database server (paralog and ortholog Ks data) for the real 1kp analysis, via the new
-# "ksrates launch-ks-database-server" CLI command against the ksrates .sif image
-# (has sqld baked in - see ksrates/Dockerfile), with the local ksrates checkout on PYTHONPATH so the
-# unified paralog+ortholog Ks database code is used.
+# Launches the dedicated Ks database server (paralog and ortholog Ks data) of the 1kp analysis, via the
+# "ksrates launch-ks-database-server" command (sqld is baked into the ksrates .sif image, see ksrates/Dockerfile).
+# The container image, the ksrates code directory (if one is set) and the database location are read from the
+# analysis' nextflow.config, so they are the same as those used by the wrapper:
+#   ksrates_sif, ksrates_code_dir, and the folder of ks_database_server_address_path.
 #
-# Submit this ONCE (sbatch launch_paralog_ks_server.sh); it then runs indefinitely (the
+# Submit this ONCE (sbatch launch_ks_database_server.sh); it then runs indefinitely (the
 # underlying command execs into sqld and never returns on success). If this cluster enforces a
 # walltime limit on its default partition, add a "#SBATCH --time=..." line matching the longest
 # available partition, and be prepared to resubmit (server data/keys persist across restarts,
@@ -16,11 +17,35 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=4G
 
-SIF=/group/esb/cesen/1kp/software/ksrates_a6822fe_20261007.sif
-LOCATION=/group/esb/cesen/1kp/ks_analysis/1kp/ks_database
+ANALYSIS_DIR=/group/esb/cesen/1kp/ks_analysis/1kp
+
+module load nextflow/x86_64/25.10.3
+
+cd "$ANALYSIS_DIR"
+CONFIG=$(nextflow config -flat)
+
+# value of "params.<name> = <value>" in the resolved config, without quotes ('null' counts as not set)
+param() {
+    echo "$CONFIG" | sed -n "s/^params\.$1 = //p" | sed "s/^['\"]//; s/['\"]$//" | grep -v '^null$' || true
+}
+
+SIF=$(param ksrates_sif)
+CODE_DIR=$(param ksrates_code_dir)
+ADDRESS_PATH=$(param ks_database_server_address_path)
+
+[ -n "$SIF" ] || { echo "ERROR: ksrates_sif is not set in $ANALYSIS_DIR/nextflow.config" >&2; exit 1; }
+[ -n "$ADDRESS_PATH" ] || { echo "ERROR: ks_database_server_address_path is not set in $ANALYSIS_DIR/nextflow.config" >&2; exit 1; }
+LOCATION=$(dirname "$ADDRESS_PATH")
+
+PYTHONPATH_OPTION=()
+[ -z "$CODE_DIR" ] || PYTHONPATH_OPTION=(--env "PYTHONPATH=$CODE_DIR")
+
+echo "Image: $SIF"
+echo "Database location: $LOCATION"
+echo ""
 
 singularity exec \
     -B /group/esb/cesen/1kp/ \
-    --env PYTHONPATH=/group/esb/cesen/1kp/code/ksrates \
+    "${PYTHONPATH_OPTION[@]}" \
     "$SIF" \
     ksrates launch-ks-database-server --location "$LOCATION"
