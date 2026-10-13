@@ -130,6 +130,8 @@ workflow {
             .flatMap { file("${base_dir}/orthologs_ks_commands.sh").readLines() }
             .filter { line -> line.trim() && !line.startsWith('#') && line.trim() != 'set -euo pipefail' }
         runOrthologJob(ortholog_commands)
+        // One item once every ortholog job has ended (the extra item keeps the list from being empty when no job ran)
+        ortholog_done = runOrthologJob.out.done.mix(Channel.of('none')).toList()
     }
     // 5) Compute and store paralog data
     if (params.execute_paralog_jobs) {
@@ -137,10 +139,19 @@ workflow {
             .flatMap { file("${base_dir}/paralogs_ks_commands.sh").readLines() }
             .filter { line -> line.trim() && !line.startsWith('#') && line.trim() != 'set -euo pipefail' }
         runParalogJob(paralog_commands)
+        paralog_done = runParalogJob.out.done.mix(Channel.of('none')).toList()
     }
-    // 6) Execute ksrates pipelines
+    // 6) Execute ksrates pipelines. If the ortholog and/or paralog jobs are run in the same launch, wait until
+    // all of them have ended, so that the pipelines find the Ks values in the database.
     if (params.execute_real_pipelines) {
-        real_pipeline_rows = prepareConfigs.out.summary
+        pipelines_ready = prepareConfigs.out.summary
+        if (params.execute_ortholog_jobs) {
+            pipelines_ready = pipelines_ready.combine(ortholog_done)
+        }
+        if (params.execute_paralog_jobs) {
+            pipelines_ready = pipelines_ready.combine(paralog_done)
+        }
+        real_pipeline_rows = pipelines_ready
             .flatMap { file("${base_dir}/config_manifest.tsv").readLines().drop(1) }
             .map { line -> line.split('\t') }
             .map { fields -> tuple(fields[0], fields[1], fields[2], fields[3]) }
@@ -272,6 +283,9 @@ process runOrthologJob {
     input:
         val command_line
 
+    output:
+        val 'done', emit: done
+
     script:
     """
     ${command_line}
@@ -289,6 +303,9 @@ process runParalogJob {
 
     input:
         val command_line
+
+    output:
+        val 'done', emit: done
 
     script:
     """
