@@ -54,6 +54,27 @@ quality_score = 0.8 * BUSCO_percentile + 0.2 * TransRate_percentile
 Higher scores are preferred when choosing among leaves within the same selected
 subclade.
 
+## Genome BUSCO scores (methods)
+
+The 31 genome-based species are not in the 1KP score table, and TransRate cannot be computed for them (it needs sequencing reads). To give them a quality score comparable with the transcriptomes, BUSCO completeness was measured for them as close as possible to the 1KP protocol.
+
+**What 1KP did** (Leebens-Mack et al. 2019, *Nature* 574:679-685, Methods and Extended Data Fig. 3; Carpenter et al. 2019, *GigaScience* 8:giz126): BUSCO with default settings, using the eukaryote (`eukaryota_odb9`) and embryophyte (`embryophyta_odb9`) gene sets, on the proteins predicted from each assembly. BUSCO completeness is reported as "complete + fragmented" (= 100% - missing), and samples with more than 42.5% missing eukaryota BUSCOs were removed. The BUSCO version is not stated unambiguously in the sources we could read. The BUSCO column used here (`% BUSCOs (complete+fragmented)`) is taken to be the `eukaryota_odb9` set, because its values (30-98%, mean 87%) are in the range of that 303-gene set and not of the 1440-gene embryophyta set; the paper does not say so explicitly.
+
+**What was done for the genomes**
+
+1. Input: the CDS FASTA of the primary transcripts of each genome (`genome_species_manifest.tsv`, column `cds_filepath`), after the FASTA/GFF post-processing described in the genome log.
+2. Translation of each CDS to protein with the standard genetic code (trailing stop removed, internal stops and ambiguous codons written as `X`), one protein file per species. Script: `others/translate_cds_to_protein.py` (output in `genome_busco/translated_fasta/`).
+3. BUSCO 3.0.2b (cluster module `busco/x86_64/3.0.2b`, protein mode `-m proteins`, default settings, `-c 4`) against `eukaryota_odb9` (303 BUSCOs). BUSCO 3 is the latest version that reads the odb9 gene sets (BUSCO 4 and later require odb10), which are needed to match 1KP. The odb9 data are no longer distributed by the BUSCO authors and were taken from the archived copy at https://zenodo.org/records/20987183. Script: `others/run_busco_genomes.sh` (one SLURM array task per species).
+4. Collection: `others/collect_busco_scores.py` reads the BUSCO short summaries and writes `genome_busco_scores.tsv` with `busco_complete_fragmented = 100 - missing`, plus the complete, fragmented and missing percentages and the number of BUSCOs (303 for all species).
+
+**How the score is used.** The genome BUSCO values are ranked together with the 1KP transcriptome values, giving each genome a BUSCO percentile. The quality score of a genome is this percentile alone, since it has no TransRate (for transcriptomes: 0.8 x BUSCO percentile + 0.2 x TransRate percentile). TransRate measures read-mapping errors of an assembly and is not defined for an annotated genome, so it cannot be used. This is a convention, not a claim that a genome would score like a transcriptome on TransRate: the BUSCO weight is rescaled from 0.8 to 1 so that the only available measure carries the whole score. A genome and a transcriptome are therefore compared on BUSCO alone for the genome and on BUSCO plus TransRate for the transcriptome, and a transcriptome with a high BUSCO but a low TransRate percentile scores lower than a genome with the same BUSCO percentile.
+
+**Limitations to state when publishing**
+
+- BUSCO 3.0.2b is not necessarily the version 1KP used, and BUSCO was applied to annotated gene models of genomes, not to proteins predicted from assemblies; the values are comparable in kind, not identical in method.
+- Most genomes score above the highest transcriptome (98.3%), so they are preferred as representatives whenever a clade offers one. Pinta (62.7%) and Chlva (75.2%) rank low.
+- The score only decides which species represent a clade in a dataset; it does not enter the Ks analysis itself.
+
 ## Output Columns: `focal_branch_to_dataset.tsv`
 
 One row per branch.

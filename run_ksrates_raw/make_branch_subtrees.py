@@ -38,6 +38,9 @@ SCORE_TABLE = Path(
     "/group/esb/cesen/1kp/source_data/1.species_dataset/"
     "1kp_paper_2019_suptab1_species.tsv"
 )
+GENOME_BUSCO_TABLE = Path(
+    "/group/esb/cesen/1kp/source_data/2.genomes/1kp/genome_busco/genome_busco_scores.tsv"
+)
 BUSCO_COL = "% BUSCOs (complete+fragmented)"
 TRANSRATE_COL = "TransRate Score"
 
@@ -67,6 +70,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--score-table", type=Path, default=SCORE_TABLE)
+    parser.add_argument(
+        "--genome-busco-table",
+        type=Path,
+        default=GENOME_BUSCO_TABLE,
+        help=(
+            "BUSCO (complete+fragmented, run with collect_busco_scores.py) of the genome-based species, "
+            "which are not in the 1KP score table. Columns species_id, busco_complete_fragmented."
+        ),
+    )
     parser.add_argument("--busco-weight", type=float, default=0.8)
     parser.add_argument("--transrate-weight", type=float, default=0.2)
     return parser.parse_args()
@@ -241,6 +253,21 @@ def load_quality_scores(args: argparse.Namespace) -> Dict[str, float]:
             if transrate_value is not None:
                 transrate[species] = transrate_value
 
+    # Genome species have no TransRate (it needs reads). They are ranked by BUSCO together with the 1KP
+    # transcriptomes and scored by the BUSCO percentile alone (weight rescaled to 1), not penalised for the
+    # missing TransRate.
+    genome_busco: Dict[str, float] = {}
+    with args.genome_busco_table.open(newline="") as handle:
+        for row in csv.DictReader(handle, delimiter="\t"):
+            species = (row.get("species_id") or "").strip()
+            value = to_float(row.get("busco_complete_fragmented", ""))
+            if not species or value is None:
+                continue
+            if species in busco:
+                sys.exit(f"ERROR: genome species {species} is also in the 1KP score table")
+            genome_busco[species] = value
+    busco.update(genome_busco)
+
     busco_pct = percentile_ranks(busco)
     transrate_pct = percentile_ranks(transrate)
     scores = {}
@@ -249,6 +276,8 @@ def load_quality_scores(args: argparse.Namespace) -> Dict[str, float]:
             args.busco_weight * busco_pct.get(species, 0.0)
             + args.transrate_weight * transrate_pct.get(species, 0.0)
         )
+    for species in genome_busco:
+        scores[species] = busco_pct[species]
     return scores
 
 

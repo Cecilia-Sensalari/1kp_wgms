@@ -175,6 +175,7 @@ process generateDatasetList {
         --out ${base_dir}/focal_branch_to_dataset.tsv \
         --datasets-out ${base_dir}/subtree_datasets.tsv \
         --score-table ${params.score_table} \
+        --genome-busco-table ${params.genome_busco_table} \
         --max-a ${params.max_a} \
         --max-older ${params.max_older} \
         --older-clades ${params.older_clades} \
