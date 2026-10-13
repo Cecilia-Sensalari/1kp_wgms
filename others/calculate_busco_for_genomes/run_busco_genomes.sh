@@ -32,7 +32,7 @@ set -euo pipefail
 MANIFEST=/group/esb/cesen/1kp/source_data/2.genomes/1kp/genome_species_manifest.tsv
 OUT_DIR=/group/esb/cesen/1kp/source_data/2.genomes/1kp/genome_busco
 LINEAGE=${LINEAGE:-/group/esb/cesen/1kp/software/busco_lineages/eukaryota_odb9}
-SCRIPT_DIR=/group/esb/cesen/1kp/code/1kp_wgms/others
+SCRIPT_DIR=/group/esb/cesen/1kp/code/1kp_wgms/others/calculate_busco_for_genomes
 PYTHON_MODULE=python/x86_64/3.11.4
 BUSCO_MODULE=busco/x86_64/3.0.2b
 THREADS=${SLURM_CPUS_PER_TASK:-4}

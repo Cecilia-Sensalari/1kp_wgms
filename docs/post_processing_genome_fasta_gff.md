@@ -56,7 +56,7 @@ NCBI assembly GCA_003427395.1 Cbr_1.0, strain S276.
   unique, so one record was kept per locus tag: the **longest** CDS (the first one if equally long), i.e. one
   representative transcript per gene. 946 records were dropped.
 - Result: 34721 sequences, one per locus tag.
-- Script: `code/1kp_wgms/others/rename_fasta_to_locus_tag.sh`
+- Script: `code/1kp_wgms/others/post_process_genome_fasta_gff/rename_fasta_to_locus_tag.sh`
 - Logs: `GCA_003427395.1_Cbr_1.0_cds_from_genomic.locus_tag.fna.mapping.tsv` (new name, original name, length of
   the kept records) and `...locus_tag.fna.dropped.tsv` (dropped records and the record kept instead).
 
@@ -67,11 +67,11 @@ of the first fragment are kept and `;merged_fragments=N` is appended). Fragments
 on the same contig and strand, which was the case for all 103. For all 103, the merged span is identical to the
 span of the `mRNA` line of the same locus tag; the largest merged gene spans 417819 bases (CBR_g30033). All other
 lines are unchanged. `gene` lines: 35701 before, 35422 after.
-- Script: `code/1kp_wgms/others/merge_gff_gene_fragments.sh`
+- Script: `code/1kp_wgms/others/post_process_genome_fasta_gff/merge_gff_gene_fragments.sh`
 - Log: `GCA_003427395.1_Cbr_1.0_genomic.merged_genes.gff.merge_log.tsv` (per gene: fragments, merged span,
   `mRNA` span, status).
 
-**3. Choice of the feature and attribute** with `code/1kp_wgms/others/scan_gff_feature_attribute.py`, which
+**3. Choice of the feature and attribute** with `code/1kp_wgms/others/post_process_genome_fasta_gff/scan_gff_feature_attribute.py`, which
 tests every (feature, attribute) pair of the GFF against the FASTA names and keeps only pairs that identify each
 gene exactly once and whose feature spans the whole transcript (`mRNA`, `gene` or `transcript`).
 - `gene` / `locus_tag`: 34719 of the 34721 FASTA names found (99.99%), one line per gene. **Chosen.**
@@ -99,10 +99,10 @@ attribute other than ID, Name and Parent unchanged, with a warning that it is no
 ```bash
 cd /group/esb/cesen/1kp/source_data/2.genomes/1kp/genome_species
 O=post_processing_fasta_gff_logs/Chabr_v0.1
-bash /group/esb/cesen/1kp/code/1kp_wgms/others/rename_fasta_to_locus_tag.sh \
+bash /group/esb/cesen/1kp/code/1kp_wgms/others/post_process_genome_fasta_gff/rename_fasta_to_locus_tag.sh \
     $O/GCA_003427395.1_Cbr_1.0_cds_from_genomic_ORIGINAL.fna \
     GCA_003427395.1_Cbr_1.0_cds_from_genomic.locus_tag.fna
-bash /group/esb/cesen/1kp/code/1kp_wgms/others/merge_gff_gene_fragments.sh \
+bash /group/esb/cesen/1kp/code/1kp_wgms/others/post_process_genome_fasta_gff/merge_gff_gene_fragments.sh \
     $O/GCA_003427395.1_Cbr_1.0_genomic_ORIGINAL.gff \
     GCA_003427395.1_Cbr_1.0_genomic.merged_genes.gff
 ```
@@ -125,17 +125,17 @@ NCBI RefSeq assembly ASM9120v1 (GCF_000091205.1), per the manifest.
 - Every locus tag has exactly one CDS record, so all 4803 sequences were kept and none dropped (the
   `...dropped.tsv` log is empty).
 - Result: 4803 sequences, one per locus tag.
-- Script: `code/1kp_wgms/others/rename_fasta_to_locus_tag.sh`
+- Script: `code/1kp_wgms/others/post_process_genome_fasta_gff/rename_fasta_to_locus_tag.sh`
 - Logs in `Cyame_v1.0/`: `GCF_000091205.1_ASM9120v1_cds_from_genomic.locus_tag.fna.mapping.tsv` and
   `...locus_tag.fna.dropped.tsv` (empty).
 
-**2. Check of the GFF for split `gene` lines**, with `code/1kp_wgms/others/merge_gff_gene_fragments.sh`, the
+**2. Check of the GFF for split `gene` lines**, with `code/1kp_wgms/others/post_process_genome_fasta_gff/merge_gff_gene_fragments.sh`, the
 script used for Chabr_v0.1. No locus tag has more than one `gene` line, so nothing was merged and the output was
 identical to the input (same md5): the GFF was **not changed** and the original file is used. Only the log (header
 only, no merged gene) is kept, in `Cyame_v1.0/`: `GCF_000091205.1_ASM9120v1_genomic.merged_genes.gff.merge_log.tsv`.
 The output copy, identical to the input, is not kept.
 
-**3. Choice of the feature and attribute** with `code/1kp_wgms/others/scan_gff_feature_attribute.py`, against the
+**3. Choice of the feature and attribute** with `code/1kp_wgms/others/post_process_genome_fasta_gff/scan_gff_feature_attribute.py`, against the
 renamed FASTA. Three pairs find all 4803 FASTA names (coverage 1.000) with exactly one GFF line per gene, and
 are therefore all valid (the scan reports `TIE`):
 - `mRNA` / `locus_tag` (the transcript line; one `mRNA` per gene). **Chosen** (first candidate of the scan),
@@ -160,12 +160,12 @@ points to the original GFF. For the collinearity analysis use `gff_feature = mRN
 ```bash
 cd /group/esb/cesen/1kp/source_data/2.genomes/1kp/genome_species
 O=post_processing_fasta_gff_logs/Cyame_v1.0
-bash /group/esb/cesen/1kp/code/1kp_wgms/others/rename_fasta_to_locus_tag.sh \
+bash /group/esb/cesen/1kp/code/1kp_wgms/others/post_process_genome_fasta_gff/rename_fasta_to_locus_tag.sh \
     $O/GCF_000091205.1_ASM9120v1_cds_from_genomic.fna \
     GCF_000091205.1_ASM9120v1_cds_from_genomic.locus_tag.fna
 # GFF check: expect 5373 gene lines in input and output and no status line listed. The output
 # ($O/...merged_genes.gff) is identical to the input and can be deleted; only the log is kept.
-bash /group/esb/cesen/1kp/code/1kp_wgms/others/merge_gff_gene_fragments.sh \
+bash /group/esb/cesen/1kp/code/1kp_wgms/others/post_process_genome_fasta_gff/merge_gff_gene_fragments.sh \
     GCF_000091205.1_ASM9120v1_genomic.gff \
     $O/GCF_000091205.1_ASM9120v1_genomic.merged_genes.gff
 ```
@@ -247,7 +247,7 @@ awk 'BEGIN { FS = OFS = "\t"; print "##gff-version 3" } /^#/ { print; next } NF 
 
 `rename_fasta_to_locus_tag.sh` and `merge_gff_gene_fragments.sh` refuse to overwrite an existing output and never
 change their input; each writes its logs next to its output. The scan is run for all genome species with
-`python3 code/1kp_wgms/others/scan_gff_feature_attribute.py` (result: `source_data/2.genomes/1kp/gff_feature_attribute_scan.tsv`,
+`python3 code/1kp_wgms/others/post_process_genome_fasta_gff/scan_gff_feature_attribute.py` (result: `source_data/2.genomes/1kp/gff_feature_attribute_scan.tsv`,
 overwritten at every run).
 
 Checks on 2026-10-13: every processed file listed above was regenerated from its original with the commands given,

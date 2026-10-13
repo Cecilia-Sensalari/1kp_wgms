@@ -19,7 +19,7 @@
 # throttle can be changed on an already-submitted job without cancelling/resubmitting it:
 #   scontrol update JobId=<jobid> ArrayTaskThrottle=<new_limit>
 # Any extra arguments are passed straight through to sbatch, overriding
-# run_command_array_task.sbatch's own #SBATCH defaults (e.g. to give paralogs-ks more memory
+# run_command_array_task.sh's own #SBATCH defaults (e.g. to give paralogs-ks more memory
 # than init needs).
 
 set -euo pipefail
@@ -52,5 +52,5 @@ sbatch \
     --output="$LOG_DIR/%x_%A_%a.log" \
     --array="1-${N}%${MAX_CONCURRENT}" \
     "${EXTRA_SBATCH_ARGS[@]}" \
-    "$SCRIPT_DIR/run_command_array_task.sbatch" \
+    "$SCRIPT_DIR/run_command_array_task.sh" \
     "$COMMAND_FILE"
