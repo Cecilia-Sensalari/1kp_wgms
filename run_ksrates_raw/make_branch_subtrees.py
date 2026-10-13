@@ -361,7 +361,8 @@ def merge_branches_into_datasets(
     """
     merged: Dict[str, dict] = {}
     for row in branch_rows:
-        dataset, traversal_order, newick, focal, target, *_, n_selected = row
+        dataset, newick, focal, target, n_selected = row[0], row[2], row[3], row[4], row[9]
+        traversal_order = str(row[1])
         entry = merged.get(dataset)
         if entry is None:
             merged[dataset] = {
