@@ -1,7 +1,8 @@
 # `make_branch_subtrees.py`
 
-This script creates the `branch_subtrees.tsv` input used to set up branch-centered
-`ksrates` analyses. It reads the rooted 1KP species tree, visits every non-root
+This script creates the tables used to set up branch-centered `ksrates` analyses:
+`focal_branch_to_dataset.tsv` (one row per branch) and `subtree_datasets.tsv` (one row per distinct dataset).
+See `dataset_generation_summary.md` for a one-page description of how the datasets are built. It reads the rooted 1KP species tree, visits every non-root
 branch, and writes a small local subtree around that branch.
 
 ## How the Local Subtree Is Defined
@@ -25,7 +26,6 @@ For `A`, the rule is based on the two child subclades below the test node:
 
 - leaf branch: keep the single leaf;
 - two descendant leaves: keep both;
-- three descendant leaves: keep all three, split as `1 + 2` across the two child subclades;
 - larger clades: keep up to two species from each child subclade.
 
 When `A` is an internal node, its two child subclades can be thought of as
@@ -54,15 +54,28 @@ quality_score = 0.8 * BUSCO_percentile + 0.2 * TransRate_percentile
 Higher scores are preferred when choosing among leaves within the same selected
 subclade.
 
-## Output Columns
+## Output Columns: `focal_branch_to_dataset.tsv`
 
-- `branch_id`: traversal number plus either the leaf 1KP ID or `internal`, e.g. `000651_JKAA` or `000650_internal`.
+One row per branch.
+
+- `dataset_id`: first 8 characters of the SHA-1 of the sorted selected species. It depends only on the species set, so different branches that select the same species get the same id.
+- `traversal_order`: position of the branch in the preorder walk of the tree (unique per branch).
 - `newick_tree`: pruned Newick tree containing only the selected species.
 - `focal_species`: species that should be treated as focal species by downstream `ksrates` setup.
   This is `A_species + B_species + C_species`.
 - `target_species`: all selected species in the subtree, including `D_species`.
 - `A_species`, `B_species`, `C_species`, `D_species`: selected representatives by local clade.
 - `n_selected_species`: total number of species retained in the row.
+
+## Output Columns: `subtree_datasets.tsv`
+
+One row per distinct `dataset_id`; this is the input of `prepare_branch_ksrates_configs.py`. Branches with the same `dataset_id` have the same tree and target species, so their ksrates runs are identical and they are generated once. For example the two sister branches below a node can select the same species set, with A and B swapped.
+
+- `dataset_id`, `newick_tree`, `target_species`, `n_selected_species`: as above.
+- `focal_species`: union of the focal species of the branches that share the dataset.
+- `branches`: the `traversal_order` values of those branches.
+
+To interpret a branch, look up its `dataset_id` in `focal_branch_to_dataset.tsv`, then use the output of the focal species of its `A_species` under `datasets/<dataset_id>/`. The script stops with an error if two branches with the same `dataset_id` have different trees or species.
 
 The largest expected subtree has ten species: four from `A` and two each from
 `B`, `C`, and `D`.
@@ -73,7 +86,7 @@ Only `A`, `B`, and `C` representatives are focal species by default:
 
 - `A_species`: expected to share a putative WGM on the tested branch.
 - `B_species`: closest species expected not to share that WGM.
-- `C_species`: older negative comparison, used to confirm the signal outside `A`.
+- `C_species`: older comparison that gives more depth to the Ks plot, to see how the signal relates to the putative WGM on the tested branch.
 
 `D_species` is kept in the subtree as older context for correction/outgroup
 choice, but is not treated as focal by default.
@@ -82,7 +95,8 @@ choice, but is not treated as focal by default.
 
 ```bash
 python3 code/1kp_wgms/run_ksrates_raw/make_branch_subtrees.py \
-  --out /path/to/ks_analysis/1kp/ksrates_raw/branch_subtrees.tsv
+  --out /path/to/ks_analysis/1kp/ksrates_raw/focal_branch_to_dataset.tsv \
+  --datasets-out /path/to/ks_analysis/1kp/ksrates_raw/subtree_datasets.tsv
 ```
 
 The script requires `ete3` in the active Python environment.

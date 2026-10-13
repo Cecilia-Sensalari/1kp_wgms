@@ -1,7 +1,7 @@
 #!/usr/bin/env nextflow
 
 /*
- * batch_ksrates: generates species_metadata.tsv, the dataset list (branch_subtrees.tsv), and
+ * batch_ksrates: generates species_metadata.tsv, the branch table (focal_branch_to_dataset.tsv), the dataset list (subtree_datasets.tsv), and
  * per-dataset ksrates configs/command files for the centralized paralog/ortholog Ks database
  * workflow (wraps generate_species_metadata.py, make_branch_subtrees.py, and
  * prepare_branch_ksrates_configs.py from ../run_ksrates_raw).
@@ -172,7 +172,8 @@ process generateDatasetList {
     """
     python3 ${SCRIPT_DIR}/make_branch_subtrees.py \
         --tree ${params.tree} \
-        --out ${base_dir}/branch_subtrees.tsv \
+        --out ${base_dir}/focal_branch_to_dataset.tsv \
+        --datasets-out ${base_dir}/subtree_datasets.tsv \
         --score-table ${params.score_table} \
         --max-a ${params.max_a} \
         --max-older ${params.max_older} \
@@ -181,7 +182,7 @@ process generateDatasetList {
         --busco-weight ${params.busco_weight} \
         --transrate-weight ${params.transrate_weight} \
         ${max_datasets_arg}
-    DATASET_LIST=${base_dir}/branch_subtrees.tsv
+    DATASET_LIST=${base_dir}/subtree_datasets.tsv
     """
 }
 

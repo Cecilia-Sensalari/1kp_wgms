@@ -25,7 +25,7 @@ species are used as focal species for that dataset.
 The normal workflow is:
 
     python prepare_branch_ksrates_configs.py \
-        --datasets datasets.tsv \
+        --datasets subtree_datasets.tsv \
         --species-metadata species_metadata.tsv \
         --out-dir ksrates_setup \
         --max-outgroups 4 \

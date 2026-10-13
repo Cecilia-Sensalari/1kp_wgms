@@ -18,5 +18,6 @@ python3 make_branch_subtrees.py \
   --max-a 4 \
   --max-older 2 \
   --older-clades 3 \
-  --out $output_dir/branch_subtrees.tsv \
+  --out $output_dir/focal_branch_to_dataset.tsv \
+  --datasets-out $output_dir/subtree_datasets.tsv \
   &> $output_dir/make_branch_subtrees.log

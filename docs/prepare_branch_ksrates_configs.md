@@ -62,7 +62,7 @@ Generate configs and command files only:
 
 ```bash
 python3 code/1kp_wgms/run_ksrates_raw/prepare_branch_ksrates_configs.py \
-  --subtrees branch_subtrees.tsv \
+  --datasets subtree_datasets.tsv \
   --species-metadata species_metadata.tsv \
   --out-dir ksrates_branch_setup
 ```
@@ -73,7 +73,7 @@ This writes configs but does not run ksrates yet.
 
 ```bash
 python3 code/1kp_wgms/run_ksrates_raw/prepare_branch_ksrates_configs.py \
-  --subtrees branch_subtrees.tsv \
+  --datasets subtree_datasets.tsv \
   --species-metadata species_metadata.tsv \
   --out-dir ksrates_branch_setup \
   --max-outgroups 4 \
@@ -103,7 +103,7 @@ branches/branch_001/ortholog_pairs.tsv
 
 Most important files:
 
-- `ortholog_pairs.tsv`: global deduplicated pair list across all branches/focals
+- `ortholog_pairs.tsv`: global deduplicated pair list across all branches/focals, with a `queued` column (False for pairs whose peak and Ks list are already in the Ks database, which are left out of `orthologs_ks_commands.sh`; always True when no `--ks-database-server-address-path` is given)
 - `ortholog_pairs_by_source.tsv`: shows which focal config required each pair
 - `orthologs_ks_commands.sh`: commands to calculate the needed ortholog Ks distributions
 

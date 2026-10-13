@@ -7,7 +7,14 @@ The output subtree keeps:
   - up to 3 progressively older sibling clades, named B/C/D;
   - up to 2 balanced representatives from each older clade.
 
-The output TSV can be passed to prepare_branch_ksrates_configs.py.
+Two TSVs are written:
+  - focal_branch_to_dataset.tsv (--out): one row per branch, with its A/B/C/D species. This is the link between
+    a branch (traversal_order) and its dataset_id, used to interpret the results of a branch.
+  - subtree_datasets.tsv (--datasets-out): one row per distinct dataset_id, input of
+    prepare_branch_ksrates_configs.py. Several branches can select the very same species set (for example
+    the two sister branches below a node): they have the same tree and the same ksrates runs, so they
+    are one dataset. Its focal species are the union of those of its branches and its 'branches' column
+    lists their traversal_order values.
 """
 
 from __future__ import annotations
@@ -26,7 +33,7 @@ TREE_PATH = Path(
     "astral_trees_33_percent-FAA_estimated_species_tree.rooted."
     "wgm_suptab3_mrca.nhx.manual_fixes.tree"
 )
-DEFAULT_OUT = Path(__file__).with_name("branch_subtrees.tsv")
+DEFAULT_OUT = Path(__file__).with_name("focal_branch_to_dataset.tsv")
 SCORE_TABLE = Path(
     "/group/esb/cesen/1kp/source_data/1.species_dataset/"
     "1kp_paper_2019_suptab1_species.tsv"
@@ -38,7 +45,13 @@ TRANSRATE_COL = "TransRate Score"
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tree", type=Path, default=TREE_PATH)
-    parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="per-branch table (focal_branch_to_dataset.tsv)")
+    parser.add_argument(
+        "--datasets-out",
+        type=Path,
+        default=None,
+        help="per-dataset table, one row per distinct dataset_id; default: subtree_datasets.tsv next to --out",
+    )
     parser.add_argument("--max-a", type=int, default=4)
     parser.add_argument("--max-older", type=int, default=2)
     parser.add_argument("--older-clades", type=int, default=3)
@@ -286,6 +299,71 @@ def rows_for_tree(
         ]
 
 
+BRANCH_COLUMNS = [
+    "dataset_id",
+    "traversal_order",
+    "newick_tree",
+    "focal_species",
+    "target_species",
+    "A_species",
+    "B_species",
+    "C_species",
+    "D_species",
+    "n_selected_species",
+]
+DATASET_COLUMNS = [
+    "dataset_id",
+    "newick_tree",
+    "focal_species",
+    "target_species",
+    "n_selected_species",
+    "branches",
+]
+
+
+def merge_branches_into_datasets(
+    branch_rows: Sequence[List[str]], order: Dict[str, int]
+) -> List[List[str]]:
+    """One row per dataset_id, in order of first appearance.
+
+    Rows with the same dataset_id have the same selected species, so the same pruned tree and target
+    list; this is checked. Their focal species can differ (e.g. when only the outgroup D differs), and
+    the dataset gets the union of them.
+    """
+    merged: Dict[str, dict] = {}
+    for row in branch_rows:
+        dataset, traversal_order, newick, focal, target, *_, n_selected = row
+        entry = merged.get(dataset)
+        if entry is None:
+            merged[dataset] = {
+                "newick": newick,
+                "target": target,
+                "n": n_selected,
+                "focal": set(focal.split(",")),
+                "branches": [traversal_order],
+            }
+            continue
+        if entry["newick"] != newick or entry["target"] != target:
+            sys.exit(
+                f"ERROR: branches {entry['branches'][0]} and {traversal_order} have the same "
+                f"dataset_id {dataset} but different trees or species"
+            )
+        entry["focal"].update(focal.split(","))
+        entry["branches"].append(traversal_order)
+
+    return [
+        [
+            dataset,
+            entry["newick"],
+            ",".join(sorted(entry["focal"], key=order.get)),
+            entry["target"],
+            entry["n"],
+            ",".join(entry["branches"]),
+        ]
+        for dataset, entry in merged.items()
+    ]
+
+
 def main() -> None:
     args = parse_args()
 
@@ -293,31 +371,29 @@ def main() -> None:
     tree = load_tree(args.tree)
     scores = load_quality_scores(args)
 
+    datasets_out = args.datasets_out or args.out.with_name("subtree_datasets.tsv")
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    with args.out.open("w", newline="") as handle:
-        writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
-        writer.writerow(
-            [
-                "dataset_id",
-                "traversal_order",
-                "newick_tree",
-                "focal_species",
-                "target_species",
-                "A_species",
-                "B_species",
-                "C_species",
-                "D_species",
-                "n_selected_species",
-            ]
-        )
-        count = 0
-        for row in rows_for_tree(tree, args, scores):
-            writer.writerow(row)
-            count += 1
-            if args.max_datasets is not None and count >= args.max_datasets:
-                break
+    datasets_out.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"Wrote {count} branch subtrees to {args.out}")
+    branch_rows: List[List[str]] = []
+    for row in rows_for_tree(tree, args, scores):
+        branch_rows.append(row)
+        if args.max_datasets is not None and len(branch_rows) >= args.max_datasets:
+            break
+
+    dataset_rows = merge_branches_into_datasets(branch_rows, leaf_order(tree))
+
+    for path, columns, rows in (
+        (args.out, BRANCH_COLUMNS, branch_rows),
+        (datasets_out, DATASET_COLUMNS, dataset_rows),
+    ):
+        with path.open("w", newline="") as handle:
+            writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
+            writer.writerow(columns)
+            writer.writerows(rows)
+
+    print(f"Wrote {len(branch_rows)} branches to {args.out}")
+    print(f"Wrote {len(dataset_rows)} distinct datasets to {datasets_out}")
 
 
 if __name__ == "__main__":
