@@ -107,6 +107,15 @@ def parse_args() -> argparse.Namespace:
         help="TSV with dataset_id and newick_tree columns.",
     )
     parser.add_argument(
+        "--last-datasets",
+        type=int,
+        default=None,
+        help=(
+            "Use only the last N datasets of the --datasets table (the order of the table follows the tree "
+            "traversal), for a quick test on a part of the tree. Default: all datasets."
+        ),
+    )
+    parser.add_argument(
         "--species-metadata",
         required=True,
         type=Path,
@@ -282,6 +291,11 @@ def main() -> None:
 
     metadata = read_species_metadata(args.species_metadata, args.keep_relative_paths)
     datasets = read_datasets(args.datasets)
+    if args.last_datasets is not None:
+        if args.last_datasets < 1:
+            fail("--last-datasets must be at least 1")
+        datasets = datasets[-args.last_datasets:]
+        print(f"Using only the last {len(datasets)} datasets of the table: " + ", ".join(d.dataset_id for d in datasets))
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     # Each dataset's configs/, per-dataset ortholog_pairs.tsv, and per-focal init/pipeline
