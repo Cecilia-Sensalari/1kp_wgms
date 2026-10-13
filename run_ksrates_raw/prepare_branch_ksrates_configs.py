@@ -18,6 +18,8 @@ The script expects two small TSV files:
    Optional columns:
       focal_species    target_species
 
+ksrates does not accept an underscore or a space in an informal species name, so every species name read from the two tables is shortened to the part before the first underscore (a genome species `Phavu_v1.0` is called `Phavu` in configs, pair files and commands; its version stays in the latin name). The 4-letter transcriptome IDs are unchanged. The dataset directories keep the dataset id, which is computed from the original names.
+
 By default, every leaf in a dataset's tree becomes a focal species. If the
 ``focal_species`` column is present, only those comma/semicolon/space-separated
 species are used as focal species for that dataset.

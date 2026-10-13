@@ -11,6 +11,8 @@ from ksrates_batch_common import (
     SpeciesRecord,
     column_name,
     fail,
+    ksrates_newick,
+    ksrates_species_name,
     normalize_data_path,
     read_table,
 )
@@ -37,6 +39,7 @@ def read_species_metadata(path: Path, keep_relative_paths: bool) -> Dict[str, Sp
         species = row.get(species_col, "").strip()
         if not species:
             fail(f"{path}:{row_number} has an empty species value")
+        species = ksrates_species_name(species)
         if species in metadata:
             fail(f"{path}:{row_number} repeats species {species!r}")
         fasta = normalize_data_path(row.get(fasta_col, ""), base_dir, keep_relative_paths)
@@ -72,15 +75,24 @@ def read_datasets(path: Path) -> List[DatasetRecord]:
             fail(f"{path}:{row_number} has an empty dataset_id")
         if not newick_tree:
             fail(f"{path}:{row_number} has an empty Newick tree")
+        newick_tree = ksrates_newick(newick_tree)
         leaves = tuple(parse_newick_leaves(newick_tree))
         if not leaves:
             fail(f"{path}:{row_number} Newick tree has no detectable leaves")
 
-        focal_species = tuple(split_species_list(row.get(focal_col, ""))) if focal_col else leaves
+        focal_species = (
+            tuple(ksrates_species_name(item) for item in split_species_list(row.get(focal_col, "")))
+            if focal_col
+            else leaves
+        )
         if not focal_species:
             focal_species = leaves
 
-        target_species = tuple(split_species_list(row.get(target_col, ""))) if target_col else tuple()
+        target_species = (
+            tuple(ksrates_species_name(item) for item in split_species_list(row.get(target_col, "")))
+            if target_col
+            else tuple()
+        )
         datasets.append(
             DatasetRecord(
                 dataset_id=dataset_id,

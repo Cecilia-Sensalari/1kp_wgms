@@ -108,6 +108,21 @@ def normalize_data_path(value: str, base_dir: Path, keep_relative: bool) -> str:
     return str((base_dir / path).resolve())
 
 
+def ksrates_species_name(species_id: str) -> str:
+    """Informal species name for ksrates, which allows no underscore or space in a name.
+
+    A genome species id such as Phavu_v1.0 becomes Phavu (the version stays in its latin name); the 4-letter
+    transcriptome ids are unchanged. Used for every species name read from the metadata and dataset tables, so
+    that configs, pair files and commands all use the same names.
+    """
+    return species_id.split("_")[0]
+
+
+def ksrates_newick(newick: str) -> str:
+    """The Newick tree with every species name converted by ksrates_species_name."""
+    return re.sub(r"[^(),;:]+", lambda match: ksrates_species_name(match.group(0)), newick)
+
+
 def safe_name(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9.+-]+", "_", value.strip())
     return cleaned.strip("_") or "unnamed"
