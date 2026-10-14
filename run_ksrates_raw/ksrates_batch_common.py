@@ -194,9 +194,14 @@ def write_tsv(path: Path, header: Sequence[str], rows: Iterable[Sequence[object]
             writer.writerow([str(value) for value in row])
 
 
-def write_command_file(path: Path, entries: Sequence[Tuple[Path, Sequence[Sequence[str]]]]) -> None:
+def write_command_file(path: Path, entries: Sequence[tuple]) -> None:
     """
     Write a bash script with one line per entry: "( cd <cwd> && <cmd1> && <cmd2> && ... )".
+    An entry is (cwd, commands) or (cwd, commands, log_file): with a log file, the output (stdout and stderr) of
+    all its commands is written to that file instead of the job's own log in the Nextflow work directory, so that
+    it can be found by name. The folder of the log file is created here. If the log file already exists (a rerun),
+    it is first renamed to <name>.<its modification time>.log, so the file with the plain name is always the
+    latest run and earlier runs are kept.
     Each entry's command list lets several ksrates invocations that must run in sequence (e.g.
     orthologs-ks then orthologs-analysis for the same pair) live on one script line, sharing one
     cwd, with "&&" ensuring a later command only runs if the earlier one succeeded.
@@ -205,7 +210,21 @@ def write_command_file(path: Path, entries: Sequence[Tuple[Path, Sequence[Sequen
     with path.open("w") as handle:
         handle.write("#!/usr/bin/env bash\n")
         handle.write("set -euo pipefail\n\n")
-        for cwd, commands in entries:
-            joined = " && ".join(shell_join(command) for command in commands)
+        for entry in entries:
+            cwd, commands = entry[0], entry[1]
+            log_file = entry[2] if len(entry) > 2 else None
+            if log_file is not None:
+                Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+                log_var = f"log={shlex.quote(str(log_file))}"
+                rotate = '{ [ ! -e "$log" ] || mv "$log" "${log%.log}.$(date -r "$log" +%Y%m%d_%H%M%S).log"; }'
+                joined = " && ".join(
+                    [log_var, rotate]
+                    + [
+                        f'{shell_join(command)} {">" if index == 0 else ">>"} "$log" 2>&1'
+                        for index, command in enumerate(commands)
+                    ]
+                )
+            else:
+                joined = " && ".join(shell_join(command) for command in commands)
             handle.write(f"( cd {shlex.quote(str(cwd))} && {joined} )\n")
     path.chmod(0o755)

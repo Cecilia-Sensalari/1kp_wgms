@@ -307,6 +307,7 @@ def main() -> None:
     database_root = args.out_dir / "databases"
     ortholog_work_dir = args.out_dir / "ortholog_runs"
     paralog_work_dir = args.out_dir / "paralog_runs"
+    paralog_log_dir = paralog_work_dir / "paralog_ksrates_logs"
     ortholog_work_dir.mkdir(parents=True, exist_ok=True)
     if args.ks_database_server_address_path is not None:
         paralog_work_dir.mkdir(parents=True, exist_ok=True)
@@ -513,6 +514,7 @@ def main() -> None:
     # analysis step is scoped to a single-pair TSV (not the full per-focal ortholog_pairs file)
     # so it only ever processes the one pair just computed, not every pair that focal needs.
     ortholog_pairs_dir = ortholog_work_dir / "pairs"
+    ortholog_log_dir = ortholog_work_dir / "ortholog_ksrates_logs"
     ortholog_commands = []
     for species_1, species_2 in ordered_pairs:
         if not queued_pairs[(species_1, species_2)]:
@@ -527,6 +529,7 @@ def main() -> None:
                     build_ortholog_command(args, chosen.config_path, species_1, species_2),
                     build_ortholog_analysis_command(args, chosen.config_path, pair_tsv_path),
                 ],
+                ortholog_log_dir / f"{species_1}_{species_2}.log",
             )
         )
     write_command_file(args.out_dir / "orthologs_ks_commands.sh", ortholog_commands)
@@ -566,7 +569,11 @@ def main() -> None:
         for species in ordered_species:
             if queued_species[species]:
                 paralog_commands.append(
-                    (paralog_work_dir, [build_paralog_command(args, chosen_config_by_species[species])])
+                    (
+                        paralog_work_dir,
+                        [build_paralog_command(args, chosen_config_by_species[species])],
+                        paralog_log_dir / f"{safe_name(species)}.log",
+                    )
                 )
         write_command_file(args.out_dir / "paralogs_ks_commands.sh", paralog_commands)
 
