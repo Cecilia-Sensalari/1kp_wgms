@@ -71,7 +71,7 @@ This writes configs but does not run ksrates yet.
 
 **3. `ksrates init`**
 
-The script does not run `ksrates init`. The Nextflow wrapper does (`--run_init`, see `how_to_launch_batch_wrapper.md`): it starts one job for every config with `init_done = no` in `config_manifest.tsv` and then runs this script again, which collects the generated `ortholog_pairs_<focal>` files and deduplicates them.
+The script does not run `ksrates init`. The Nextflow wrapper does (`run_init = true` in its `nextflow.config`, see `how_to_launch_batch_wrapper.md`): it starts one job for every config with `init_done = no` in `config_manifest.tsv` and then runs this script again, which collects the generated `ortholog_pairs_<focal>` files and deduplicates them.
 
 **4. Main Outputs**
 
