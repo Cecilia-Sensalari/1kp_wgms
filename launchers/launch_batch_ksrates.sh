@@ -30,4 +30,6 @@ MAIN_NF=/group/esb/cesen/1kp/code/1kp_wgms/batch_ksrates/main.nf
 module load nextflow/x86_64/25.10.3
 
 cd "$ANALYSIS_DIR"
-nextflow run "$MAIN_NF" -resume "$@"
+# -ansi-log false: in a file, the ANSI progress display would print the whole progress block again at every update.
+# Progress at a glance: others/nextflow_progress.sh (per process, from the trace file), or run in a terminal.
+nextflow run "$MAIN_NF" "$@" -ansi-log false
