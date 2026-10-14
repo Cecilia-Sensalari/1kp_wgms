@@ -2,16 +2,16 @@
 
 /*
  * batch_ksrates: generates species_metadata.tsv, the branch table (focal_branch_to_dataset.tsv), the dataset list (subtree_datasets.tsv), and
- * per-dataset ksrates configs and the tables of Ks jobs for the centralized paralog/ortholog Ks database
+ * per-dataset ksrates configs and the tables of jobs for the centralized paralog/ortholog Ks database
  * workflow (wraps generate_species_metadata.py, make_branch_subtrees.py, and
  * prepare_branch_ksrates_configs.py from ../run_ksrates_raw).
  *
  * Does NOT launch/stop the paralog Ks sqld server - that stays its own independent,
  * long-running process; point --ks_database_server_address_path at its already-running address file.
- * Runs the Ks jobs (paralogs-ks, orthologs-ks and orthologs-analysis) only with --execute_paralog_jobs and
- * --execute_ortholog_jobs: each job takes its species or pair from a table written by prepare_branch_ksrates_configs.py
- * and the command is written once, in its process. ksrates init is not run unless --run_init is turned on (init_commands.sh
- * is still written, to run init split across parallel jobs).
+ * Runs ksrates init (one job per config without init output) only with --run_init, and the Ks jobs (paralogs-ks,
+ * orthologs-ks and orthologs-analysis) only with --execute_paralog_jobs and --execute_ortholog_jobs: each job takes
+ * its config, species or pair from a table written by prepare_branch_ksrates_configs.py, and the ksrates command is
+ * written once, in its process.
  */
 
 LOG_OUTPUT = true
@@ -34,6 +34,30 @@ base_dir = file(params.base_dir)
 // check-*-db): the container, with the local ksrates checkout first on PYTHONPATH if ksrates_code_dir is set
 ksrates_command = params.ksrates_command ?: "singularity exec -B /group/esb/cesen/1kp ${params.ksrates_code_dir ? '--env PYTHONPATH=' + params.ksrates_code_dir + ' ' : ''}${params.ksrates_sif} ksrates"
 ksrates_container = params.ksrates_container ?: params.ksrates_sif
+
+// Options of prepare_branch_ksrates_configs.py that do not depend on the process inputs. They are shared by the
+// processes prepareConfigs (before ksrates init) and collectOrthologPairs (after it), which run the same script
+prepare_args = [
+    params.expert_config ? "--expert-config ${params.expert_config}" : "",
+    params.ks_database_server_address_path ? "--ks-database-server-address-path ${params.ks_database_server_address_path}" : "",
+    "--paralog-threads ${params.paralog_threads}",
+    params.db_check_workers ? "--db-check-workers ${params.db_check_workers}" : "",
+    "--ortholog-threads ${params.ortholog_threads}",
+    "--ksrates-command \"${ksrates_command}\"",
+    "--pair-scope ${params.pair_scope}",
+    "--max-outgroups ${params.max_outgroups}",
+    "--consensus-mode \"${params.consensus_mode}\"",
+    "--paranome ${params.paranome}",
+    "--collinearity ${params.collinearity}",
+    "--reciprocal-retention ${params.reciprocal_retention}",
+    "--gff-feature ${params.gff_feature}",
+    "--gff-attribute ${params.gff_attribute}",
+    "--num-bootstrap-iterations ${params.num_bootstrap_iterations}",
+    "--max-ks-paralogs ${params.max_ks_paralogs}",
+    "--max-ks-orthologs ${params.max_ks_orthologs}",
+    params.test_last_datasets ? "--last-datasets ${params.test_last_datasets}" : "",
+    params.keep_relative_paths ? "--keep-relative-paths" : "",
+].findAll { it }.join(' ')
 
 if (params.execute_real_pipelines && !params.expert_config) {
     error "execute_real_pipelines requires --expert_config (it needs use_ks_database_server " +
@@ -123,12 +147,34 @@ workflow {
     prepareConfigs(generateSpeciesMetadata.out.species_metadata, dataset_list_ch)
     prepareConfigs.out.summary.view()
 
+    // 4) ksrates init, only for the configs whose init output is missing (init_done = no in config_manifest.tsv), and
+    // then the second pass of the config script, which collects the ortholog pairs from the init output. The paralog
+    // jobs below do not need init and start right after prepareConfigs.
+    if (params.run_init) {
+
+        init_jobs = prepareConfigs.out.summary
+            .flatMap { file("${base_dir}/config_manifest.tsv").readLines().drop(1) }
+            .map { line -> line.split('\t') }
+            .filter { fields -> fields[5] == 'no' }
+            .map { fields -> tuple(fields[0], fields[1], fields[2], fields[3]) }    // dataset, focal species, config, init dir
+        runInit(init_jobs)
+
+        // One item once every init job has ended (the extra item keeps the list from being empty when none ran)
+        init_done = runInit.out.done.mix(Channel.of('none')).toList()
+        collectOrthologPairs(generateSpeciesMetadata.out.species_metadata, dataset_list_ch, init_done)
+        collectOrthologPairs.out.summary.view()
+        pair_tables_ready = collectOrthologPairs.out.summary
+        
+    } else {
+        pair_tables_ready = prepareConfigs.out.summary
+    }
+
     // The jobs of the next stages are read from tables that prepareConfigs writes. Each read starts from
     // prepareConfigs.out.summary, so that Nextflow waits for prepareConfigs to finish writing them first
     // (the tables are not Nextflow outputs, just plain files on disk).
-    // 4) Compute and store ortholog data: one job per pair marked yes in the column "queued" of ortholog_pairs.tsv
+    // 5) Compute and store ortholog data: one job per pair marked yes in the column "queued" of ortholog_pairs.tsv
     if (params.execute_ortholog_jobs) {
-        ortholog_jobs = prepareConfigs.out.summary
+        ortholog_jobs = pair_tables_ready
             .flatMap { file("${base_dir}/ortholog_runs/ortholog_pairs.tsv").readLines().drop(1) }
             .map { line -> line.split('\t') }
             .filter { fields -> fields[6] == 'yes' }
@@ -137,7 +183,7 @@ workflow {
         // One item once every ortholog job has ended (the extra item keeps the list from being empty when no job ran)
         ortholog_done = runOrthologJob.out.done.mix(Channel.of('none')).toList()
     }
-    // 5) Compute and store paralog data: one job per species marked yes in the column "queued" of paralog_species.tsv
+    // 6) Compute and store paralog data: one job per species marked yes in the column "queued" of paralog_species.tsv
     if (params.execute_paralog_jobs) {
         if (!params.ks_database_server_address_path) {
             error "execute_paralog_jobs requires ks_database_server_address_path: the paralog jobs are only listed when the Ks database is used"
@@ -150,10 +196,13 @@ workflow {
         runParalogJob(paralog_jobs)
         paralog_done = runParalogJob.out.done.mix(Channel.of('none')).toList()
     }
-    // 6) Execute ksrates pipelines. If the ortholog and/or paralog jobs are run in the same launch, wait until
-    // all of them have ended, so that the pipelines find the Ks values in the database.
+    // 7) Execute ksrates pipelines. If init and/or the ortholog and paralog jobs are run in the same launch, wait until
+    // all of them have ended, so that the pipelines find the init output and the Ks values in the database.
     if (params.execute_real_pipelines) {
         pipelines_ready = prepareConfigs.out.summary
+        if (params.run_init) {
+            pipelines_ready = pipelines_ready.combine(init_done)
+        }
         if (params.execute_ortholog_jobs) {
             pipelines_ready = pipelines_ready.combine(ortholog_done)
         }
@@ -230,11 +279,12 @@ process generateDatasetList {
 
 
 /*
- * Generates one ksrates config per (dataset, focal species) under base_dir/datasets/<hash>/,
- * plus init_commands.sh and the tables of the Ks jobs still to run (ortholog_runs/ortholog_pairs.tsv, and
- * paralog_runs/paralog_species.tsv if --ks_database_server_address_path is set), with a column "queued".
- * Depends on both processes above;
- * Nextflow waits for both automatically via the input channels below.
+ * First pass of prepare_branch_ksrates_configs.py: generates one ksrates config per (dataset, focal species) under
+ * base_dir/datasets/<hash>/, config_manifest.tsv (with a column init_done: yes if ksrates init has already
+ * written its output for that config), and the tables of the Ks jobs still to run, with a column "queued":
+ * ortholog_runs/ortholog_pairs.tsv (from the init output that exists at this point) and
+ * paralog_runs/paralog_species.tsv (if --ks_database_server_address_path is set).
+ * Depends on both processes above; Nextflow waits for both automatically via the input channels below.
  */
 process prepareConfigs {
 
@@ -247,37 +297,55 @@ process prepareConfigs {
         stdout emit: summary
 
     script:
-    expert_arg = params.expert_config ? "--expert-config ${params.expert_config}" : ""
-    ks_db_arg = params.ks_database_server_address_path ? "--ks-database-server-address-path ${params.ks_database_server_address_path}" : ""
-    db_check_workers_arg = params.db_check_workers ? "--db-check-workers ${params.db_check_workers}" : ""
-    run_init_arg = params.run_init ? "--run-init" : ""
-    last_datasets_arg = params.test_last_datasets ? "--last-datasets ${params.test_last_datasets}" : ""
-    keep_relative_arg = params.keep_relative_paths ? "--keep-relative-paths" : ""
     """
-    python3 ${SCRIPT_DIR}/prepare_branch_ksrates_configs.py \
-        --datasets ${dataset_list} \
-        --species-metadata ${species_metadata} \
-        --out-dir ${base_dir} \
-        ${expert_arg} \
-        ${ks_db_arg} \
-        --paralog-threads ${params.paralog_threads} \
-        ${db_check_workers_arg} \
-        --ortholog-threads ${params.ortholog_threads} \
-        --ksrates-command "${ksrates_command}" \
-        --pair-scope ${params.pair_scope} \
-        --max-outgroups ${params.max_outgroups} \
-        --consensus-mode "${params.consensus_mode}" \
-        --paranome ${params.paranome} \
-        --collinearity ${params.collinearity} \
-        --reciprocal-retention ${params.reciprocal_retention} \
-        --gff-feature ${params.gff_feature} \
-        --gff-attribute ${params.gff_attribute} \
-        --num-bootstrap-iterations ${params.num_bootstrap_iterations} \
-        --max-ks-paralogs ${params.max_ks_paralogs} \
-        --max-ks-orthologs ${params.max_ks_orthologs} \
-        ${run_init_arg} \
-        ${last_datasets_arg} \
-        ${keep_relative_arg}
+    python3 ${SCRIPT_DIR}/prepare_branch_ksrates_configs.py --datasets ${dataset_list} --species-metadata ${species_metadata} --out-dir ${base_dir} ${prepare_args}
+    """
+}
+
+
+/*
+ * Runs ksrates init for one (dataset, focal species) config, in its own datasets/<hash>/<focal>/ directory. The log
+ * goes to init.log there. Only started (with --run_init) for the configs marked init_done = no in config_manifest.tsv.
+ */
+process runInit {
+
+    tag "${dataset_id}/${focal_species}"
+
+    input:
+        tuple val(dataset_id), val(focal_species), val(config_path), val(init_run_dir)
+
+    output:
+        val 'done', emit: done
+
+    script:
+    expert_arg = params.expert_config ? "--expert ${params.expert_config}" : ""
+    """
+    mkdir -p ${init_run_dir}
+    cd ${init_run_dir}
+    ${ksrates_command} init ${config_path} ${expert_arg} > init.log 2>&1
+    """
+}
+
+
+/*
+ * Second pass of prepare_branch_ksrates_configs.py, after every ksrates init has ended: the same script and options,
+ * now finding the init output of the new configs, so that it collects their ortholog pairs and rewrites
+ * ortholog_pairs.tsv with the pairs still to run. The input init_done only makes this process wait for the init jobs.
+ */
+process collectOrthologPairs {
+
+
+    input:
+        val species_metadata
+        val dataset_list
+        val init_done
+
+    output:
+        stdout emit: summary
+
+    script:
+    """
+    python3 ${SCRIPT_DIR}/prepare_branch_ksrates_configs.py --datasets ${dataset_list} --species-metadata ${species_metadata} --out-dir ${base_dir} ${prepare_args}
     """
 }
 

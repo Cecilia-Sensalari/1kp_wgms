@@ -181,10 +181,6 @@ def map_checks_concurrently(function: Callable[[T], R], items: Sequence[T], work
             raise
 
 
-def shell_join(parts: Sequence[str]) -> str:
-    return " ".join(shlex.quote(part) for part in parts)
-
-
 def write_tsv(path: Path, header: Sequence[str], rows: Iterable[Sequence[object]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as handle:
@@ -192,20 +188,3 @@ def write_tsv(path: Path, header: Sequence[str], rows: Iterable[Sequence[object]
         writer.writerow(header)
         for row in rows:
             writer.writerow([str(value) for value in row])
-
-
-def write_command_file(path: Path, entries: Sequence[Tuple[Path, Sequence[Sequence[str]]]]) -> None:
-    """
-    Write a bash script with one line per entry: "( cd <cwd> && <cmd1> && <cmd2> && ... )".
-    Each entry's command list lets several ksrates invocations that must run in sequence (e.g.
-    orthologs-ks then orthologs-analysis for the same pair) live on one script line, sharing one
-    cwd, with "&&" ensuring a later command only runs if the earlier one succeeded.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as handle:
-        handle.write("#!/usr/bin/env bash\n")
-        handle.write("set -euo pipefail\n\n")
-        for cwd, commands in entries:
-            joined = " && ".join(shell_join(command) for command in commands)
-            handle.write(f"( cd {shlex.quote(str(cwd))} && {joined} )\n")
-    path.chmod(0o755)

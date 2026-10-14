@@ -69,18 +69,9 @@ python3 code/1kp_wgms/run_ksrates_raw/prepare_branch_ksrates_configs.py \
 
 This writes configs but does not run ksrates yet.
 
-**3. Run `ksrates init` Automatically**
+**3. `ksrates init`**
 
-```bash
-python3 code/1kp_wgms/run_ksrates_raw/prepare_branch_ksrates_configs.py \
-  --datasets subtree_datasets.tsv \
-  --species-metadata species_metadata.tsv \
-  --out-dir ksrates_branch_setup \
-  --max-outgroups 4 \
-  --run-init
-```
-
-After each `init`, the script collects the generated `ortholog_pairs_<focal>` files and deduplicates them.
+The script does not run `ksrates init`. The Nextflow wrapper does (`--run_init`, see `how_to_launch_batch_wrapper.md`): it starts one job for every config with `init_done = no` in `config_manifest.tsv` and then runs this script again, which collects the generated `ortholog_pairs_<focal>` files and deduplicates them.
 
 **4. Main Outputs**
 
@@ -96,16 +87,14 @@ init_runs/
 config_manifest.tsv
 ortholog_pairs.tsv
 ortholog_pairs_by_source.tsv
-init_commands.sh
-orthologs_ks_commands.sh
 branches/branch_001/ortholog_pairs.tsv
 ```
 
 Most important files:
 
-- `ortholog_pairs.tsv`: global deduplicated pair list across all branches/focals, with a `queued` column (False for pairs whose peak and Ks list are already in the Ks database, which are left out of `orthologs_ks_commands.sh`; always True when no `--ks-database-server-address-path` is given)
+- `ortholog_pairs.tsv`: global deduplicated pair list across all branches/focals, with a `queued` column (`no` for pairs whose peak and Ks list are already in the Ks database, which no ortholog job is started for; always `yes` when no `--ks-database-server-address-path` is given)
 - `ortholog_pairs_by_source.tsv`: shows which focal config required each pair
-- `orthologs_ks_commands.sh`: commands to calculate the needed ortholog Ks distributions
+- `paralog_runs/paralog_species.tsv`: one deduplicated species per row with the config chosen for it and a `queued` column; the Nextflow wrapper starts the Ks jobs from this table and from `ortholog_pairs.tsv`, there are no command files for them
 
 **5. Pair Scope Modes**
 

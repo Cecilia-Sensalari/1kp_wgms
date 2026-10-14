@@ -30,8 +30,11 @@ The normal workflow is:
         --datasets subtree_datasets.tsv \
         --species-metadata species_metadata.tsv \
         --out-dir ksrates_setup \
-        --max-outgroups 4 \
-        --run-init
+        --max-outgroups 4
+
+This script does not run 'ksrates init'. The Nextflow wrapper (batch_ksrates/main.nf, option --run_init)
+runs it for the configs whose column init_done in config_manifest.tsv is no, and then runs this script
+again to collect the ortholog pairs from the init output.
 
 The wrapper can either trust ksrates' complete ``ortholog_pairs_<focal>`` output
 (``--pair-scope init-pairs``), or derive a smaller pair set from selected
@@ -39,8 +42,7 @@ The wrapper can either trust ksrates' complete ``ortholog_pairs_<focal>`` output
 
 This script is the thin orchestrator: the actual work is split across
 ksrates_batch_common.py (shared types/helpers), dataset_inputs.py (reading the two input
-TSVs), ksrates_config_writer.py (writing configs), ksrates_init_runner.py (running
-'ksrates init'), ortholog_pair_collection.py (ortholog pair dedup), and
+TSVs), ksrates_config_writer.py (writing configs), ortholog_pair_collection.py (ortholog pair dedup), and
 paralog_species_dedup.py (paralog species dedup).
 """
 
@@ -62,15 +64,14 @@ from ksrates_batch_common import (
     fail,
     map_checks_concurrently,
     safe_name,
-    write_command_file,
     write_tsv,
 )
 from ksrates_config_writer import write_ksrates_config
-from ksrates_init_runner import build_init_command, run_init
 from ortholog_pair_collection import (
     collect_pairs_for_config,
     dataset_pair_rows,
     global_pair_rows,
+    init_output_exists,
     pair_still_needs_ortholog_ks,
 )
 from paralog_species_dedup import species_still_needs_paralog_ks
@@ -171,11 +172,6 @@ def parse_args() -> argparse.Namespace:
             "Command used to launch ksrates. May contain spaces, e.g. "
             "'apptainer exec image.sif ksrates'."
         ),
-    )
-    parser.add_argument(
-        "--run-init",
-        action="store_true",
-        help="Actually run 'ksrates init' for every generated config.",
     )
     parser.add_argument(
         "--pair-scope",
@@ -374,13 +370,6 @@ def main() -> None:
                 )
             )
 
-    if args.run_init:
-        for config in configs:
-            run_init(args, config)
-
-    init_commands = [(config.init_run_dir, [build_init_command(args, config.config_path)]) for config in configs]
-    write_command_file(args.out_dir / "init_commands.sh", init_commands)
-
     all_occurrences: List[PairOccurrence] = []
     missing_pair_outputs: List[ConfigRecord] = []
     for config in configs:
@@ -398,6 +387,7 @@ def main() -> None:
             "config_path",
             "init_run_dir",
             "target_species",
+            "init_done",
         ),
         (
             (
@@ -406,6 +396,7 @@ def main() -> None:
                 config.config_path,
                 config.init_run_dir,
                 ",".join(config.target_species),
+                "yes" if init_output_exists(args, config) else "no",
             )
             for config in configs
         ),
@@ -561,14 +552,14 @@ def main() -> None:
               f"the queued ones are marked 'yes' in {paralog_work_dir / 'paralog_species.tsv'}")
 
     print(f"Wrote {len(configs)} ksrates configs to {datasets_root}")
-    print(f"Wrote init command file: {args.out_dir / 'init_commands.sh'}")
     if pair_to_occurrences:
         print(f"Collected {len(pair_to_occurrences)} unique ortholog pairs ({n_queued_pairs} queued); "
               f"the queued ones are marked 'yes' in {ortholog_work_dir / 'ortholog_pairs.tsv'}")
     else:
         print(
-            "No ortholog pairs were collected yet. Run with --run-init, or execute "
-            f"{args.out_dir / 'init_commands.sh'} and rerun this script to collect outputs."
+            "No ortholog pairs were collected yet: ksrates init has not been run for these configs. "
+            "Run the wrapper with --run_init (it lists the configs with init_done = no in "
+            f"{args.out_dir / 'config_manifest.tsv'}) and the pairs are collected afterwards."
         )
     if missing_pair_outputs:
         print(

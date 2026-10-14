@@ -33,6 +33,12 @@ def find_ksrates_file(init_run_dir: Path, focal_species: str, stem: str) -> Opti
     return matches[0] if matches else None
 
 
+def init_output_exists(args: argparse.Namespace, config: ConfigRecord) -> bool:
+    """True if ksrates init has already written the file this run collects pairs from (so init need not run again)."""
+    stem = "ortholog_pairs" if args.pair_scope == "init-pairs" else "ortholog_trios"
+    return find_ksrates_file(config.init_run_dir, config.focal_species, stem) is not None
+
+
 def read_ortholog_pairs(path: Path) -> List[Tuple[str, str]]:
     pairs: List[Tuple[str, str]] = []
     with path.open() as handle:
