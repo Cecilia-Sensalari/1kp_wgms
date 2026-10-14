@@ -7,9 +7,15 @@
 # only meant for quick tests.
 #   sbatch launch_batch_ksrates.sh
 #
-# This job only runs Nextflow itself, which submits the compute jobs to SLURM; -resume lets a rerun skip what is done.
+# This job only runs Nextflow itself, which submits the compute jobs to SLURM.
 # The Ks database server must already be running (launch_ks_database_server.sh).
-# The walltime must cover the whole run: raise it, or resubmit (the run continues with -resume).
+# The walltime must cover the whole run: raise it, or resubmit with -resume.
+#
+# Every launch starts the run from scratch. To continue the last run and skip the tasks that are done, pass -resume
+# (sbatch launch_batch_ksrates.sh -resume), e.g. to retry only the failed jobs. Careful: Nextflow decides what is
+# cached from the script of each task and its inputs, not from the content of the Python scripts or of the tables
+# they read, so after changing those, launch without -resume. Resuming also fails (lock on the session) while the
+# run it would resume is still going.
 
 #SBATCH --job-name=batch_ksrates
 #SBATCH -p all

@@ -30,6 +30,7 @@ def read_species_metadata(path: Path, keep_relative_paths: bool) -> Dict[str, Sp
     gff_col = column_name(fieldnames, ("gff_filename", "gff", "gff3", "annotation_gff"), False)
     feature_col = column_name(fieldnames, ("gff_feature",), False)
     attribute_col = column_name(fieldnames, ("gff_attribute",), False)
+    collinearity_col = column_name(fieldnames, ("collinearity",), False)
 
     base_dir = path.parent.resolve()
     metadata: Dict[str, SpeciesRecord] = {}
@@ -47,6 +48,9 @@ def read_species_metadata(path: Path, keep_relative_paths: bool) -> Dict[str, Sp
             fail(f"{path}:{row_number} has no FASTA path for species {species!r}")
         latin = row.get(latin_col, "").strip() if latin_col else species
         gff = normalize_data_path(row.get(gff_col, ""), base_dir, keep_relative_paths) if gff_col else ""
+        collinearity = row.get(collinearity_col, "").strip().lower() if collinearity_col else "no"
+        if collinearity not in ("yes", "no"):
+            fail(f"{path}:{row_number} has collinearity [{collinearity}] for species {species!r}, expected yes or no")
         metadata[species] = SpeciesRecord(
             species=species,
             latin_name=latin or species,
@@ -54,6 +58,7 @@ def read_species_metadata(path: Path, keep_relative_paths: bool) -> Dict[str, Sp
             gff_filename=gff,
             gff_feature=row.get(feature_col, "").strip() if feature_col else "",
             gff_attribute=row.get(attribute_col, "").strip() if attribute_col else "",
+            collinearity=collinearity,
         )
     return metadata
 

@@ -31,7 +31,12 @@ Optional:
 ```text
 latin_name
 gff_filename
+gff_feature
+gff_attribute
+collinearity
 ```
+
+`gff_feature` and `gff_attribute` are the GFF feature and attribute of the focal species that identify its genes (empty: the command-line defaults are used). `collinearity` (`yes` or `no`, `no` if the column is missing) is written into the config of that focal species and decides whether anchor pairs are requested from the Ks database; it can only be `yes` for a species with a GFF. `generate_species_metadata.py` fills all three columns.
 
 Subtree TSV:
 

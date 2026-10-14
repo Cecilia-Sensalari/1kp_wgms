@@ -21,13 +21,17 @@ def build_check_paralog_db_command(
     return command
 
 
-def species_still_needs_paralog_ks(args: argparse.Namespace, config_path: Path) -> bool:
+def species_still_needs_paralog_ks(args: argparse.Namespace, config_path: Path, collinearity: str) -> bool:
     """
     Checks the paralog Ks database (via 'ksrates check-paralog-db') for each analysis type
-    requested by --paranome/--collinearity/--reciprocal-retention. This is what makes rerunning
+    requested by --paranome, the collinearity of the species (column collinearity of species_metadata.tsv) and
+    --reciprocal-retention. This is what makes rerunning
     this script after changing those flags (e.g. turning collinearity on for an already-populated
     tree) cheap: without it, every unique species would always be queued again, running a job for species
     that already have everything they need.
+
+    collinearity is the value of this species in species_metadata.tsv: a species without a GFF is no there and never
+    gets anchor pairs, so they must not be asked for, or it would be queued again on every run.
 
     An unreachable database stops the whole run (see ks_database_has_data).
 
@@ -38,7 +42,7 @@ def species_still_needs_paralog_ks(args: argparse.Namespace, config_path: Path) 
     requested = []
     if args.paranome == "yes":
         requested.append("paranome")
-    if args.collinearity == "yes":
+    if collinearity == "yes":
         requested.append("anchors")
     if args.reciprocal_retention == "yes":
         requested.append("recret")

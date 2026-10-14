@@ -11,7 +11,7 @@ The script expects two small TSV files:
 1. A species metadata table with at least:
       species    fasta_filename
    Optional columns:
-      latin_name    gff_filename    gff_feature    gff_attribute
+      latin_name    gff_filename    gff_feature    gff_attribute    collinearity
 
 2. A dataset table with at least:
       dataset_id    newick_tree
@@ -201,15 +201,6 @@ def parse_args() -> argparse.Namespace:
         choices=YES_NO,
         default="no",
         help="Value for ksrates paranome setting in generated configs.",
-    )
-    parser.add_argument(
-        "--collinearity",
-        choices=YES_NO,
-        default="yes",
-        help=(
-            "Value for ksrates collinearity setting, used for focal species that have a GFF; "
-            "focal species without one (transcriptomes) always get no."
-        ),
     )
     parser.add_argument(
         "--reciprocal-retention",
@@ -524,7 +515,9 @@ def main() -> None:
         # scale even though every individual check is cheap.
         ordered_species = sorted(species_to_occurrences, key=str.lower)
         check_results = map_checks_concurrently(
-            lambda species: species_still_needs_paralog_ks(args, chosen_config_by_species[species]),
+            lambda species: species_still_needs_paralog_ks(
+                args, chosen_config_by_species[species], metadata[species].collinearity
+            ),
             ordered_species,
             args.db_check_workers,
         )

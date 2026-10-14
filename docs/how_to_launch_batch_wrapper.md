@@ -52,7 +52,7 @@ process {
 }
 ```
 
-Then launch it with the launcher, which moves to the analysis directory (so its `nextflow.config` is used) and runs Nextflow with `-resume`; it repeats none of the settings. Which stages run, like every other setting, is chosen in the analysis' `nextflow.config` and not on the command line: the config file is the permanent record of how the analysis was run, and it is the same for every rerun.
+Then launch it with the launcher, which moves to the analysis directory (so its `nextflow.config` is used) and runs Nextflow; it repeats none of the settings. A launch starts from scratch; pass `-resume` to continue the last run (see the comments in the launcher for its pitfalls). Which stages run, like every other setting, is chosen in the analysis' `nextflow.config` and not on the command line: the config file is the permanent record of how the analysis was run, and it is the same for every rerun.
 
 ```bash
 sbatch /group/esb/cesen/1kp/code/1kp_wgms/launchers/launch_batch_ksrates.sh
@@ -66,8 +66,9 @@ Parameters to set in the analysis' `nextflow.config` (the full list, with defaul
 `batch_ksrates/nextflow.config`):
 
 - `paranome`, `collinearity`, `reciprocal_retention` (`"yes"` or `"no"`): which analysis types
-  to request in every generated config. Collinearity is only used for the focal species that have a GFF
-  (the genome species); the others always get `no`.
+  to request in every generated config. Collinearity needs the GFF of the focal species, so it is decided once, when
+  `species_metadata.tsv` is generated: the column `collinearity` is the parameter for the species that have a GFF
+  (the genome species) and `no` for all the others. The configs and the check of the Ks database both read that column.
 - `run_init = true`: runs `ksrates init` as one Nextflow job per config whose init output is missing (`init_done = no`
   in `config_manifest.tsv`; configs already initialised are skipped), and when they have all ended runs the config
   step again, which collects the ortholog pairs from the init output. The ortholog jobs need these pairs, so
@@ -85,7 +86,7 @@ Three steps, the first two in parallel:
    for the 31 species without transcriptomes). For each genome species it also takes the GFF feature and
    attribute that identify its genes (`genome_gff_settings.tsv`, from the checked `gff_feature_attribute_scan.tsv`;
    Chlva uses CDS/ID by hand; Klefl has no GFF) into the columns `gff_feature` and `gff_attribute`. The config
-   of each focal species gets its own pair, and `collinearity = no` if the focal species has no GFF.
+   of each focal species gets its own pair, and its `collinearity` from the column of `species_metadata.tsv` (`no` if the species has no GFF).
 2. Regenerates the branch table (`focal_branch_to_dataset.tsv`, one row per branch) and the dataset list (`subtree_datasets.tsv`, one row per distinct dataset: branches that select the same species set are merged) from scratch, from the backbone tree. The configs are made from `subtree_datasets.tsv`.
 3. Generates one ksrates config per (dataset, focal species) under `datasets/<hash>/`, plus
    `config_manifest.tsv`, `ortholog_runs/ortholog_pairs.tsv` and (since

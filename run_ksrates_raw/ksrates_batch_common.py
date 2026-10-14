@@ -25,6 +25,7 @@ class SpeciesRecord:
     gff_filename: str = ""
     gff_feature: str = ""
     gff_attribute: str = ""
+    collinearity: str = "no"
 
 
 @dataclass(frozen=True)

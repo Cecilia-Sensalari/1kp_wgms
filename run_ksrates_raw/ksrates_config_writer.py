@@ -22,10 +22,10 @@ def write_ksrates_config(
     records = [metadata[species] for species in dataset.leaves]
     focal_record = metadata[focal_species]
 
-    # Collinearity needs the focal species' GFF, so it is switched off for focal species without one
-    # (transcriptomes, and genomes without a GFF); the GFF feature and attribute are those of the focal
-    # species' own annotation when known, else the command-line defaults.
-    collinearity = args.collinearity if focal_record.gff_filename else "no"
+    # Collinearity, the GFF feature and the GFF attribute are those of the focal species in species_metadata.tsv
+    # (collinearity is no for a species without a GFF); the command-line defaults only fill in an empty feature
+    # or attribute.
+    collinearity = focal_record.collinearity
     gff_feature = focal_record.gff_feature or args.gff_feature
     gff_attribute = focal_record.gff_attribute or args.gff_attribute
 

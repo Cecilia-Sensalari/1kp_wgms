@@ -105,6 +105,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--transcriptomes-dir", type=Path, default=TRANSCRIPTOMES_DIR)
     parser.add_argument("--genome-manifest", type=Path, default=GENOME_MANIFEST)
     parser.add_argument("--genome-gff-settings", type=Path, default=GENOME_GFF_SETTINGS)
+    parser.add_argument(
+        "--collinearity",
+        choices=("yes", "no"),
+        default="no",
+        help=(
+            "Collinearity (anchor pairs) analysis: written as yes in the column collinearity of the species that have a GFF, "
+            "the others always get no (it needs the GFF of the focal species)."
+        ),
+    )
     parser.add_argument("--output", type=Path, default=OUTPUT_PATH)
     return parser.parse_args()
 
@@ -144,17 +153,20 @@ def main() -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", newline="") as handle:
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
-        writer.writerow(["species", "fasta_filename", "latin_name", "gff_filename", "gff_feature", "gff_attribute"])
+        writer.writerow(
+            ["species", "fasta_filename", "latin_name", "gff_filename", "gff_feature", "gff_attribute", "collinearity"]
+        )
         for sample_id in transcriptome_usable_ids:
             # Append the 4-letter sample ID to the latin name (e.g. "Genus species AAXJ") so it
             # stays unique and traceable back to its source sample even when two different
             # samples share the same latin species name.
             latin_name = f"{species_by_id[sample_id]} {sample_id}"
-            writer.writerow([sample_id, str(fastas_by_id[sample_id]), latin_name, "", "", ""])
+            writer.writerow([sample_id, str(fastas_by_id[sample_id]), latin_name, "", "", "", "no"])
         for sample_id in genome_usable_ids:
             latin_name, cds_filepath, gff_filepath = genome_manifest[sample_id]
             feature, attribute = gff_settings[sample_id]
-            writer.writerow([sample_id, cds_filepath, latin_name, gff_filepath, feature, attribute])
+            collinearity = args.collinearity if gff_filepath else "no"
+            writer.writerow([sample_id, cds_filepath, latin_name, gff_filepath, feature, attribute, collinearity])
 
     total = len(transcriptome_usable_ids) + len(genome_usable_ids)
     print(

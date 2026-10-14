@@ -48,7 +48,6 @@ prepare_args = [
     "--max-outgroups ${params.max_outgroups}",
     "--consensus-mode \"${params.consensus_mode}\"",
     "--paranome ${params.paranome}",
-    "--collinearity ${params.collinearity}",
     "--reciprocal-retention ${params.reciprocal_retention}",
     "--gff-feature ${params.gff_feature}",
     "--gff-attribute ${params.gff_attribute}",
@@ -235,6 +234,7 @@ process generateSpeciesMetadata {
         --species-table ${params.species_table} \
         --transcriptomes-dir ${params.transcriptomes_dir} \
         --genome-gff-settings ${params.genome_gff_settings} \
+        --collinearity ${params.collinearity} \
         --output ${base_dir}/species_metadata.tsv
     SPECIES_METADATA=${base_dir}/species_metadata.tsv
     """
