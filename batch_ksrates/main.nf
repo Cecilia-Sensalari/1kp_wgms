@@ -325,6 +325,7 @@ process prepareConfigs {
 
     script:
     """
+    echo "=== config pass 1: the configs and the tables of the Ks jobs ==="
     python3 ${SCRIPT_DIR}/prepare_branch_ksrates_configs.py --datasets ${dataset_list} --colorings ${colorings} --species-metadata ${species_metadata} --out-dir ${base_dir} ${prepare_args}
     """
 }
@@ -373,6 +374,7 @@ process collectOrthologPairs {
 
     script:
     """
+    echo "=== config pass 2, after ksrates init: the same, now with the ortholog pairs of the new init output ==="
     python3 ${SCRIPT_DIR}/prepare_branch_ksrates_configs.py --datasets ${dataset_list} --colorings ${colorings} --species-metadata ${species_metadata} --out-dir ${base_dir} ${prepare_args}
     """
 }
