@@ -68,6 +68,7 @@ Generate configs and command files only:
 ```bash
 python3 code/1kp_wgms/run_ksrates_raw/prepare_branch_ksrates_configs.py \
   --datasets subtree_datasets.tsv \
+  --colorings focal_colorings.tsv \
   --species-metadata species_metadata.tsv \
   --out-dir ksrates_branch_setup
 ```

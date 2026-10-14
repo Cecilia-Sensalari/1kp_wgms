@@ -30,8 +30,8 @@ if (!params.base_dir) {
 }
 base_dir = file(params.base_dir)
 
-// Full 'ksrates' command line used by prepare_branch_ksrates_configs.py (init, orthologs-ks, paralogs-ks,
-// check-*-db): the container, with the local ksrates checkout first on PYTHONPATH if ksrates_code_dir is set
+// Full 'ksrates' command line used by the processes that run ksrates (init, orthologs-ks, orthologs-analysis, paralogs-ks) and by
+// prepare_branch_ksrates_configs.py (check-*-db): the container, with the local ksrates checkout first on PYTHONPATH if ksrates_code_dir is set
 ksrates_command = params.ksrates_command ?: "singularity exec -B /group/esb/cesen/1kp ${params.ksrates_code_dir ? '--env PYTHONPATH=' + params.ksrates_code_dir + ' ' : ''}${params.ksrates_sif} ksrates"
 ksrates_container = params.ksrates_container ?: params.ksrates_sif
 
@@ -142,11 +142,13 @@ workflow {
         generateDatasetList()
         dataset_list_ch = generateDatasetList.out.dataset_list
     }
-    // 3) Make config per species and writes cmd to be run
-    prepareConfigs(generateSpeciesMetadata.out.species_metadata, dataset_list_ch)
+    // 3) Colours of the divergence lines of every run, from the branch table written together with the dataset list
+    makeFocalColorings(dataset_list_ch)
+    // 4) Make one config per run and the tables of the Ks jobs still to run (the jobs are started from those tables below)
+    prepareConfigs(generateSpeciesMetadata.out.species_metadata, dataset_list_ch, makeFocalColorings.out.colorings)
     prepareConfigs.out.summary.view()
 
-    // 4) ksrates init, only for the configs whose init output is missing (init_done = no in config_manifest.tsv), and
+    // 5) ksrates init, only for the configs whose init output is missing (init_done = no in config_manifest.tsv), and
     // then the second pass of the config script, which collects the ortholog pairs from the init output. The paralog
     // jobs below do not need init and start right after prepareConfigs.
     if (params.run_init) {
@@ -160,7 +162,7 @@ workflow {
 
         // One item once every init job has ended (the extra item keeps the list from being empty when none ran)
         init_done = runInit.out.done.mix(Channel.of('none')).toList()
-        collectOrthologPairs(generateSpeciesMetadata.out.species_metadata, dataset_list_ch, init_done)
+        collectOrthologPairs(generateSpeciesMetadata.out.species_metadata, dataset_list_ch, makeFocalColorings.out.colorings, init_done)
         collectOrthologPairs.out.summary.view()
         pair_tables_ready = collectOrthologPairs.out.summary
         
@@ -171,7 +173,7 @@ workflow {
     // The jobs of the next stages are read from tables that prepareConfigs writes. Each read starts from
     // prepareConfigs.out.summary, so that Nextflow waits for prepareConfigs to finish writing them first
     // (the tables are not Nextflow outputs, just plain files on disk).
-    // 5) Compute and store ortholog data: one job per pair marked yes in the column "queued" of ortholog_pairs.tsv
+    // 6) Compute and store ortholog data: one job per pair marked yes in the column "queued" of ortholog_pairs.tsv
     if (params.execute_ortholog_jobs) {
         ortholog_jobs = pair_tables_ready
             .flatMap { file("${base_dir}/ortholog_runs/ortholog_pairs.tsv").readLines().drop(1) }
@@ -182,7 +184,7 @@ workflow {
         // One item once every ortholog job has ended (the extra item keeps the list from being empty when no job ran)
         ortholog_done = runOrthologJob.out.done.mix(Channel.of('none')).toList()
     }
-    // 6) Compute and store paralog data: one job per species marked yes in the column "queued" of paralog_species.tsv
+    // 7) Compute and store paralog data: one job per species marked yes in the column "queued" of paralog_species.tsv
     if (params.execute_paralog_jobs) {
         if (!params.ks_database_server_address_path) {
             error "execute_paralog_jobs requires ks_database_server_address_path: the paralog jobs are only listed when the Ks database is used"
@@ -195,7 +197,7 @@ workflow {
         runParalogJob(paralog_jobs)
         paralog_done = runParalogJob.out.done.mix(Channel.of('none')).toList()
     }
-    // 7) Execute ksrates pipelines. If init and/or the ortholog and paralog jobs are run in the same launch, wait until
+    // 8) Execute ksrates pipelines. If init and/or the ortholog and paralog jobs are run in the same launch, wait until
     // all of them have ended, so that the pipelines find the init output and the Ks values in the database.
     if (params.execute_real_pipelines) {
         pipelines_ready = prepareConfigs.out.summary
@@ -279,6 +281,30 @@ process generateDatasetList {
 
 
 /*
+ * Writes focal_colorings.tsv in base_dir: the colours of the divergence lines in the plot of every focal species of every
+ * dataset, by the role of each divergence node in the tested branch (see make_focal_colorings.py). It reads
+ * focal_branch_to_dataset.tsv, which has to be in the folder of the dataset list (generateDatasetList writes both there).
+ * Takes seconds, so it runs on every launch.
+ */
+process makeFocalColorings {
+
+
+    input:
+        val dataset_list
+
+    output:
+        env COLORINGS, emit: colorings
+
+    script:
+    branch_table = "${file(dataset_list).parent}/focal_branch_to_dataset.tsv"
+    """
+    python3 ${SCRIPT_DIR}/make_focal_colorings.py --branches ${branch_table} --out ${base_dir}/focal_colorings.tsv --palette "${params.divergence_palette}"
+    COLORINGS=${base_dir}/focal_colorings.tsv
+    """
+}
+
+
+/*
  * First pass of prepare_branch_ksrates_configs.py: generates one ksrates config per (dataset, focal species) under
  * base_dir/datasets/<hash>/, config_manifest.tsv (with a column init_done: yes if ksrates init has already
  * written its output for that config), and the tables of the Ks jobs still to run, with a column "queued":
@@ -292,13 +318,14 @@ process prepareConfigs {
     input:
         val species_metadata
         val dataset_list
+        val colorings
 
     output:
         stdout emit: summary
 
     script:
     """
-    python3 ${SCRIPT_DIR}/prepare_branch_ksrates_configs.py --datasets ${dataset_list} --species-metadata ${species_metadata} --out-dir ${base_dir} ${prepare_args}
+    python3 ${SCRIPT_DIR}/prepare_branch_ksrates_configs.py --datasets ${dataset_list} --colorings ${colorings} --species-metadata ${species_metadata} --out-dir ${base_dir} ${prepare_args}
     """
 }
 
@@ -338,6 +365,7 @@ process collectOrthologPairs {
     input:
         val species_metadata
         val dataset_list
+        val colorings
         val init_done
 
     output:
@@ -345,7 +373,7 @@ process collectOrthologPairs {
 
     script:
     """
-    python3 ${SCRIPT_DIR}/prepare_branch_ksrates_configs.py --datasets ${dataset_list} --species-metadata ${species_metadata} --out-dir ${base_dir} ${prepare_args}
+    python3 ${SCRIPT_DIR}/prepare_branch_ksrates_configs.py --datasets ${dataset_list} --colorings ${colorings} --species-metadata ${species_metadata} --out-dir ${base_dir} ${prepare_args}
     """
 }
 

@@ -28,6 +28,7 @@ The normal workflow is:
 
     python prepare_branch_ksrates_configs.py \
         --datasets subtree_datasets.tsv \
+        --colorings focal_colorings.tsv \
         --species-metadata species_metadata.tsv \
         --out-dir ksrates_setup \
         --max-outgroups 4
@@ -56,7 +57,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from dataset_inputs import ensure_species_known, read_datasets, read_species_metadata
+from dataset_inputs import ensure_species_known, read_colorings, read_datasets, read_species_metadata
 from ksrates_batch_common import (
     ConfigRecord,
     PairOccurrence,
@@ -106,6 +107,15 @@ def parse_args() -> argparse.Namespace:
         required=True,
         type=Path,
         help="TSV with dataset_id and newick_tree columns.",
+    )
+    parser.add_argument(
+        "--colorings",
+        required=True,
+        type=Path,
+        help=(
+            "TSV from make_focal_colorings.py with columns dataset_id, focal_species, divergence_colors, branches, run_tag: "
+            "one row per run (a focal species of a dataset with one list of divergence colours)."
+        ),
     )
     parser.add_argument(
         "--last-datasets",
@@ -269,6 +279,7 @@ def main() -> None:
     if args.db_check_workers is None:
         args.db_check_workers = default_db_check_workers()
     args.datasets = args.datasets.resolve()
+    args.colorings = args.colorings.resolve()
     args.species_metadata = args.species_metadata.resolve()
     args.out_dir = args.out_dir.resolve()
     if args.expert_config is not None:
@@ -279,6 +290,7 @@ def main() -> None:
 
     metadata = read_species_metadata(args.species_metadata, args.keep_relative_paths)
     datasets = read_datasets(args.datasets)
+    colorings = read_colorings(args.colorings)
     if args.last_datasets is not None:
         if args.last_datasets < 1:
             fail("--last-datasets must be at least 1")
@@ -331,22 +343,28 @@ def main() -> None:
 
         dataset_dir_name = safe_name(dataset.dataset_id)
         dataset_dir = datasets_root / dataset_dir_name
-        for focal_species in dataset.focal_species:
-            config_path = (
-                dataset_dir
-                / "configs"
-                / f"config_{dataset_dir_name}_{safe_name(focal_species)}.txt"
-            )
+        runs = colorings.get(dataset.dataset_id)
+        if not runs:
+            fail(f"dataset {dataset.dataset_id!r} has no rows in {args.colorings}")
+        if {run.focal_species for run in runs} != set(dataset.focal_species):
+            fail(f"dataset {dataset.dataset_id!r} has other focal species in {args.colorings} than in {args.datasets}")
+        for run in runs:
+            focal_species = run.focal_species
+            # One run per focal species, or per focal species and colour list if a dataset needs several lists for it
+            # (run_tag is then the branch the list is for)
+            run_name = safe_name(focal_species) + (f".{run.run_tag}" if run.run_tag else "")
+            config_path = dataset_dir / "configs" / f"config_{dataset_dir_name}_{run_name}.txt"
             # Also the real Stage-4 main.nf pipeline run's own working directory for this
-            # focal species, not just a throwaway init-probe location - ksrates' own hardcoded
+            # run, not just a throwaway init-probe location - ksrates' own hardcoded
             # rate_adjustment/<focal>/ subdirectory lands inside here either way.
-            init_run_dir = dataset_dir / safe_name(focal_species)
+            init_run_dir = dataset_dir / run_name
             write_ksrates_config(
                 config_path,
                 dataset,
                 focal_species,
                 metadata,
                 args,
+                run.divergence_colors,
                 peak_database_path,
                 ks_list_database_path,
                 ks_database_server_address_path=args.ks_database_server_address_path,
@@ -358,6 +376,7 @@ def main() -> None:
                     config_path=config_path,
                     init_run_dir=init_run_dir,
                     target_species=dataset.target_species,
+                    branches=run.branches,
                 )
             )
 
@@ -379,6 +398,7 @@ def main() -> None:
             "init_run_dir",
             "target_species",
             "init_done",
+            "branches",
         ),
         (
             (
@@ -388,6 +408,7 @@ def main() -> None:
                 config.init_run_dir,
                 ",".join(config.target_species),
                 "yes" if init_output_exists(args, config) else "no",
+                config.branches,
             )
             for config in configs
         ),

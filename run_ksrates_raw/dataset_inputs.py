@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Set, Tuple
 
 from ksrates_batch_common import (
+    ColoringRecord,
     DatasetRecord,
     SpeciesRecord,
     column_name,
@@ -108,6 +109,32 @@ def read_datasets(path: Path) -> List[DatasetRecord]:
             )
         )
     return datasets
+
+
+def read_colorings(path: Path) -> Dict[str, List[ColoringRecord]]:
+    """Rows of focal_colorings.tsv (make_focal_colorings.py): the colour list of each run, by dataset."""
+    fieldnames, rows = read_table(path)
+    columns = {
+        name: column_name(fieldnames, (name,), required)
+        for name, required in (
+            ("dataset_id", True),
+            ("focal_species", True),
+            ("divergence_colors", True),
+            ("branches", False),
+            ("run_tag", False),
+        )
+    }
+    colorings: Dict[str, List[ColoringRecord]] = {}
+    for row in rows:
+        record = ColoringRecord(
+            dataset_id=row[columns["dataset_id"]],
+            focal_species=ksrates_species_name(row[columns["focal_species"]]),
+            divergence_colors=", ".join(item.strip() for item in row[columns["divergence_colors"]].split(",")),
+            branches=row.get(columns["branches"], "") if columns["branches"] else "",
+            run_tag=row.get(columns["run_tag"], "") if columns["run_tag"] else "",
+        )
+        colorings.setdefault(record.dataset_id, []).append(record)
+    return colorings
 
 
 def split_species_list(value: str) -> List[str]:

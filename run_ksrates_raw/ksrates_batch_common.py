@@ -44,6 +44,16 @@ class ConfigRecord:
     config_path: Path
     init_run_dir: Path
     target_species: Tuple[str, ...]
+    branches: str = ""
+
+
+@dataclass(frozen=True)
+class ColoringRecord:
+    dataset_id: str
+    focal_species: str
+    divergence_colors: str
+    branches: str
+    run_tag: str
 
 
 @dataclass(frozen=True)

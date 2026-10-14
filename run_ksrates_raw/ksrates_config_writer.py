@@ -15,6 +15,7 @@ def write_ksrates_config(
     focal_species: str,
     metadata: Dict[str, SpeciesRecord],
     args: argparse.Namespace,
+    divergence_colors: str,
     peak_database_path: Optional[Path] = None,
     ks_list_database_path: Optional[Path] = None,
     ks_database_server_address_path: Optional[Path] = None,
@@ -74,10 +75,7 @@ def write_ksrates_config(
             "y_axis_max_limit_paralogs_plot = None",
             "",
             f"num_bootstrap_iterations = {args.num_bootstrap_iterations}",
-            (
-                "divergence_colors = Red, MediumBlue, Goldenrod, Crimson, "
-                "ForestGreen, Gray, SaddleBrown, Black"
-            ),
+            f"divergence_colors = {divergence_colors}",
             "x_axis_max_limit_orthologs_plots = 5",
             "bin_width_orthologs = 0.1",
             "",
