@@ -7,9 +7,9 @@
  * prepare_branch_ksrates_configs.py from ../run_ksrates_raw).
  *
  * Does NOT launch/stop the paralog Ks sqld server - that stays its own independent,
- * long-running process; point --ks_database_server_address_path at its already-running address file.
- * Runs ksrates init (one job per config without init output) only with --run_init, and the Ks jobs (paralogs-ks,
- * orthologs-ks and orthologs-analysis) only with --execute_paralog_jobs and --execute_ortholog_jobs: each job takes
+ * long-running process; point ks_database_server_address_path at its already-running address file.
+ * Runs ksrates init (one job per config without init output) only with run_init = true, and the Ks jobs (paralogs-ks,
+ * orthologs-ks and orthologs-analysis) only with execute_paralog_jobs and execute_ortholog_jobs = true: each job takes
  * its config, species or pair from a table written by prepare_branch_ksrates_configs.py, and the ksrates command is
  * written once, in its process.
  */
@@ -26,7 +26,7 @@ LOG_OUTPUT = true
  */
 
 if (!params.base_dir) {
-    error "base_dir is required, e.g. --base_dir /group/esb/cesen/1kp/ks_analysis/1kp"
+    error "base_dir is required: set it in the nextflow.config of the analysis, e.g. base_dir = '/group/esb/cesen/1kp/ks_analysis/1kp'"
 }
 base_dir = file(params.base_dir)
 
@@ -60,7 +60,7 @@ prepare_args = [
 ].findAll { it }.join(' ')
 
 if (params.execute_real_pipelines && !params.expert_config) {
-    error "execute_real_pipelines requires --expert_config (it needs use_ks_database_server " +
+    error "execute_real_pipelines requires expert_config (it needs use_ks_database_server " +
         "= yes to actually benefit from the already-populated database, rather than silently " +
         "recomputing everything from scratch)"
 }
@@ -71,7 +71,7 @@ SCRIPT_DIR = "${workflow.projectDir}/../run_ksrates_raw"
 // when actually needed. Mirrors ks_analysis/test_subtree/nextflow.config's shape (singularity
 // profile + per-process resource withName blocks) but points at our own local container/bind
 // mounts instead of the public vibpsb/ksrates:latest image, and is rewritten fresh on every run
-// so a changed --ks_database_server_address_path/--transcriptomes_dir is always reflected.
+// so a changed ks_database_server_address_path/transcriptomes_dir is always reflected.
 if (params.execute_real_pipelines) {
     bind_mounts = [base_dir.toString(), params.transcriptomes_dir]
     if (params.ksrates_code_dir) {
@@ -283,7 +283,7 @@ process generateDatasetList {
  * base_dir/datasets/<hash>/, config_manifest.tsv (with a column init_done: yes if ksrates init has already
  * written its output for that config), and the tables of the Ks jobs still to run, with a column "queued":
  * ortholog_runs/ortholog_pairs.tsv (from the init output that exists at this point) and
- * paralog_runs/paralog_species.tsv (if --ks_database_server_address_path is set).
+ * paralog_runs/paralog_species.tsv (if ks_database_server_address_path is set).
  * Depends on both processes above; Nextflow waits for both automatically via the input channels below.
  */
 process prepareConfigs {
@@ -305,7 +305,7 @@ process prepareConfigs {
 
 /*
  * Runs ksrates init for one (dataset, focal species) config, in its own datasets/<hash>/<focal>/ directory. The log
- * goes to init.log there. Only started (with --run_init) for the configs marked init_done = no in config_manifest.tsv.
+ * goes to init.log there. Only started (with run_init = true) for the configs marked init_done = no in config_manifest.tsv.
  */
 process runInit {
 
