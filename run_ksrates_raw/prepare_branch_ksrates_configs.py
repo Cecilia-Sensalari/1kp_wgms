@@ -68,14 +68,12 @@ from ksrates_batch_common import (
 from ksrates_config_writer import write_ksrates_config
 from ksrates_init_runner import build_init_command, run_init
 from ortholog_pair_collection import (
-    build_ortholog_analysis_command,
-    build_ortholog_command,
     collect_pairs_for_config,
     dataset_pair_rows,
     global_pair_rows,
     pair_still_needs_ortholog_ks,
 )
-from paralog_species_dedup import build_paralog_command, species_still_needs_paralog_ks
+from paralog_species_dedup import species_still_needs_paralog_ks
 
 
 YES_NO = ("yes", "no")
@@ -141,9 +139,10 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Path to the Ks database (sqld) server's address file, serving paralog and ortholog Ks data. When given, every generated "
-            "config gets a ks_database_server_address_path line pointed at it, and a "
-            "paralogs_ks_commands.sh is written with one deduplicated 'paralogs-ks' command per "
-            "unique species across all datasets (mirrors the existing ortholog-pair dedup). The "
+            "config gets a ks_database_server_address_path line pointed at it, and "
+            "paralog_runs/paralog_species.tsv lists one deduplicated species per row across all "
+            "datasets, marked in its column 'queued' when 'paralogs-ks' still has to run for it "
+            "(mirrors the ortholog-pair dedup). The "
             "paired expert config (--expert-config) must set use_ks_database_server = yes."
         ),
     )
@@ -159,8 +158,8 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Number of concurrent 'ksrates check-paralog-db' / 'check-ortholog-db' calls to run while "
-            "filtering already-populated species and pairs out of paralogs_ks_commands.sh and "
-            "orthologs_ks_commands.sh. Each call starts a container and a Python process, so it "
+            "marking the species and pairs that are already populated as not queued in "
+            "paralog_species.tsv and ortholog_pairs.tsv. Each call starts a container and a Python process, so it "
             "needs a CPU of its own. Default: the number of CPUs this process may use "
             "(up to 16)."
         ),
@@ -307,7 +306,6 @@ def main() -> None:
     database_root = args.out_dir / "databases"
     ortholog_work_dir = args.out_dir / "ortholog_runs"
     paralog_work_dir = args.out_dir / "paralog_runs"
-    paralog_log_dir = paralog_work_dir / "paralog_ksrates_logs"
     ortholog_work_dir.mkdir(parents=True, exist_ok=True)
     if args.ks_database_server_address_path is not None:
         paralog_work_dir.mkdir(parents=True, exist_ok=True)
@@ -508,31 +506,7 @@ def main() -> None:
             dataset_pair_rows(dataset_pair_map),
         )
 
-    # Each entry chains orthologs-ks (raw Ks computation, local files only) with
-    # orthologs-analysis (bootstrap peak estimation, writes to the shared peak/Ks-list TSVs) via
-    # "&&", so the database actually gets populated - orthologs-ks alone never touches it. The
-    # analysis step is scoped to a single-pair TSV (not the full per-focal ortholog_pairs file)
-    # so it only ever processes the one pair just computed, not every pair that focal needs.
-    ortholog_pairs_dir = ortholog_work_dir / "pairs"
-    ortholog_log_dir = ortholog_work_dir / "ortholog_ksrates_logs"
-    ortholog_commands = []
-    for species_1, species_2 in ordered_pairs:
-        if not queued_pairs[(species_1, species_2)]:
-            continue
-        chosen = chosen_by_pair[(species_1, species_2)]
-        pair_tsv_path = ortholog_pairs_dir / f"{species_1}_{species_2}.tsv"
-        write_tsv(pair_tsv_path, ("Species1", "Species2"), [(species_1, species_2)])
-        ortholog_commands.append(
-            (
-                ortholog_work_dir,
-                [
-                    build_ortholog_command(args, chosen.config_path, species_1, species_2),
-                    build_ortholog_analysis_command(args, chosen.config_path, pair_tsv_path),
-                ],
-                ortholog_log_dir / f"{species_1}_{species_2}.log",
-            )
-        )
-    write_command_file(args.out_dir / "orthologs_ks_commands.sh", ortholog_commands)
+    n_queued_pairs = sum(queued_pairs.values())
 
     # Species-level dedup for paralog population, mirroring the pair-level dedup above: the same
     # real species can appear as focal_species in many different datasets (since species is
@@ -565,17 +539,7 @@ def main() -> None:
         )
         queued_species: Dict[str, bool] = dict(zip(ordered_species, check_results))
 
-        paralog_commands = []
-        for species in ordered_species:
-            if queued_species[species]:
-                paralog_commands.append(
-                    (
-                        paralog_work_dir,
-                        [build_paralog_command(args, chosen_config_by_species[species])],
-                        paralog_log_dir / f"{safe_name(species)}.log",
-                    )
-                )
-        write_command_file(args.out_dir / "paralogs_ks_commands.sh", paralog_commands)
+        n_queued_species = sum(queued_species.values())
 
         write_tsv(
             paralog_work_dir / "paralog_species.tsv",
@@ -591,16 +555,16 @@ def main() -> None:
             ),
         )
 
-        already_populated = len(species_to_occurrences) - len(paralog_commands)
+        already_populated = len(species_to_occurrences) - n_queued_species
         print(f"Collected {len(species_to_occurrences)} unique paralog species "
-              f"({len(paralog_commands)} queued, {already_populated} already fully populated)")
-        print(f"Wrote paralog command file: {args.out_dir / 'paralogs_ks_commands.sh'}")
+              f"({n_queued_species} queued, {already_populated} already fully populated); "
+              f"the queued ones are marked 'yes' in {paralog_work_dir / 'paralog_species.tsv'}")
 
     print(f"Wrote {len(configs)} ksrates configs to {datasets_root}")
     print(f"Wrote init command file: {args.out_dir / 'init_commands.sh'}")
     if pair_to_occurrences:
-        print(f"Collected {len(pair_to_occurrences)} unique ortholog pairs")
-        print(f"Wrote ortholog command file: {args.out_dir / 'orthologs_ks_commands.sh'}")
+        print(f"Collected {len(pair_to_occurrences)} unique ortholog pairs ({n_queued_pairs} queued); "
+              f"the queued ones are marked 'yes' in {ortholog_work_dir / 'ortholog_pairs.tsv'}")
     else:
         print(
             "No ortholog pairs were collected yet. Run with --run-init, or execute "

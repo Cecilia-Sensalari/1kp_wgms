@@ -2,14 +2,16 @@
 
 /*
  * batch_ksrates: generates species_metadata.tsv, the branch table (focal_branch_to_dataset.tsv), the dataset list (subtree_datasets.tsv), and
- * per-dataset ksrates configs/command files for the centralized paralog/ortholog Ks database
+ * per-dataset ksrates configs and the tables of Ks jobs for the centralized paralog/ortholog Ks database
  * workflow (wraps generate_species_metadata.py, make_branch_subtrees.py, and
  * prepare_branch_ksrates_configs.py from ../run_ksrates_raw).
  *
  * Does NOT launch/stop the paralog Ks sqld server - that stays its own independent,
  * long-running process; point --ks_database_server_address_path at its already-running address file.
- * Does NOT execute any of the generated commands (ksrates init/orthologs-ks/paralogs-ks stay a
- * separate, later, separately-parallelized step) unless --run_init is explicitly turned on.
+ * Runs the Ks jobs (paralogs-ks, orthologs-ks and orthologs-analysis) only with --execute_paralog_jobs and
+ * --execute_ortholog_jobs: each job takes its species or pair from a table written by prepare_branch_ksrates_configs.py
+ * and the command is written once, in its process. ksrates init is not run unless --run_init is turned on (init_commands.sh
+ * is still written, to run init split across parallel jobs).
  */
 
 LOG_OUTPUT = true
@@ -121,24 +123,31 @@ workflow {
     prepareConfigs(generateSpeciesMetadata.out.species_metadata, dataset_list_ch)
     prepareConfigs.out.summary.view()
 
-    // Gated behind prepareConfigs.out.summary (not a bare Channel.fromPath on the command file)
-    // so Nextflow waits for prepareConfigs to actually finish writing it first - these files
-    // aren't Nextflow outputs themselves, just plain paths on disk.
-    // 4) Compute and store ortholog data
+    // The jobs of the next stages are read from tables that prepareConfigs writes. Each read starts from
+    // prepareConfigs.out.summary, so that Nextflow waits for prepareConfigs to finish writing them first
+    // (the tables are not Nextflow outputs, just plain files on disk).
+    // 4) Compute and store ortholog data: one job per pair marked yes in the column "queued" of ortholog_pairs.tsv
     if (params.execute_ortholog_jobs) {
-        ortholog_commands = prepareConfigs.out.summary
-            .flatMap { file("${base_dir}/orthologs_ks_commands.sh").readLines() }
-            .filter { line -> line.trim() && !line.startsWith('#') && line.trim() != 'set -euo pipefail' }
-        runOrthologJob(ortholog_commands)
+        ortholog_jobs = prepareConfigs.out.summary
+            .flatMap { file("${base_dir}/ortholog_runs/ortholog_pairs.tsv").readLines().drop(1) }
+            .map { line -> line.split('\t') }
+            .filter { fields -> fields[6] == 'yes' }
+            .map { fields -> tuple(fields[0], fields[1], fields[4]) }    // species_1, species_2, chosen config
+        runOrthologJob(ortholog_jobs)
         // One item once every ortholog job has ended (the extra item keeps the list from being empty when no job ran)
         ortholog_done = runOrthologJob.out.done.mix(Channel.of('none')).toList()
     }
-    // 5) Compute and store paralog data
+    // 5) Compute and store paralog data: one job per species marked yes in the column "queued" of paralog_species.tsv
     if (params.execute_paralog_jobs) {
-        paralog_commands = prepareConfigs.out.summary
-            .flatMap { file("${base_dir}/paralogs_ks_commands.sh").readLines() }
-            .filter { line -> line.trim() && !line.startsWith('#') && line.trim() != 'set -euo pipefail' }
-        runParalogJob(paralog_commands)
+        if (!params.ks_database_server_address_path) {
+            error "execute_paralog_jobs requires ks_database_server_address_path: the paralog jobs are only listed when the Ks database is used"
+        }
+        paralog_jobs = prepareConfigs.out.summary
+            .flatMap { file("${base_dir}/paralog_runs/paralog_species.tsv").readLines().drop(1) }
+            .map { line -> line.split('\t') }
+            .filter { fields -> fields[3] == 'yes' }
+            .map { fields -> tuple(fields[0], fields[2]) }               // species, chosen config
+        runParalogJob(paralog_jobs)
         paralog_done = runParalogJob.out.done.mix(Channel.of('none')).toList()
     }
     // 6) Execute ksrates pipelines. If the ortholog and/or paralog jobs are run in the same launch, wait until
@@ -222,8 +231,9 @@ process generateDatasetList {
 
 /*
  * Generates one ksrates config per (dataset, focal species) under base_dir/datasets/<hash>/,
- * plus the deduplicated command files (init_commands.sh, orthologs_ks_commands.sh, and
- * paralogs_ks_commands.sh if --ks_database_server_address_path is set). Depends on both processes above;
+ * plus init_commands.sh and the tables of the Ks jobs still to run (ortholog_runs/ortholog_pairs.tsv, and
+ * paralog_runs/paralog_species.tsv if --ks_database_server_address_path is set), with a column "queued".
+ * Depends on both processes above;
  * Nextflow waits for both automatically via the input channels below.
  */
 process prepareConfigs {
@@ -273,43 +283,68 @@ process prepareConfigs {
 
 
 /*
- * Runs one line of orthologs_ks_commands.sh (already a complete, self-contained
- * "( cd <cwd> && orthologs-ks ... && orthologs-analysis ... )" subshell from write_command_file())
- * as its own slurm job. One process instance per unique ortholog pair.
+ * Runs paralogs-ks for one species, in paralog_runs/ (where ksrates writes paralog_distributions/). One job per
+ * species marked queued in paralog_species.tsv. The ksrates output goes to
+ * paralog_runs/paralog_ksrates_logs/<species>.log; the log of an earlier run is kept, renamed with the time of
+ * its last modification.
  */
-process runOrthologJob {
+process runParalogJob {
 
+    tag "${species}"
 
     input:
-        val command_line
+        tuple val(species), val(config_path)
 
     output:
         val 'done', emit: done
 
     script:
+    expert_arg = params.expert_config ? "--expert ${params.expert_config}" : ""
+    run_dir = "${base_dir}/paralog_runs"
+    log_dir = "${run_dir}/paralog_ksrates_logs"
     """
-    ${command_line}
+    mkdir -p ${log_dir}
+    log=${log_dir}/${species}.log
+    if [ -e "\$log" ]; then mv "\$log" "\${log%.log}.\$(date -r "\$log" +%Y%m%d_%H%M%S).log"; fi
+    cd ${run_dir}
+    ${ksrates_command} paralogs-ks ${config_path} ${expert_arg} --n-threads ${params.paralog_threads} > "\$log" 2>&1
     """
 }
 
 
 /*
- * Runs one line of paralogs_ks_commands.sh (already a complete, self-contained
- * "( cd <cwd> && paralogs-ks ... )" subshell from write_command_file()) as its own slurm job.
- * One process instance per unique paralog species.
+ * Runs the Ks estimation of one ortholog species pair, in ortholog_runs/: orthologs-ks (raw Ks values) and then
+ * orthologs-analysis (bootstrap peak estimation, which is what stores the peak and the Ks list; orthologs-ks alone
+ * never does). One job per pair marked queued in ortholog_pairs.tsv. The analysis is pointed at a one-pair table
+ * (ortholog_runs/pairs/<A>_<B>.tsv, written here), so that it only processes this pair and not every pair of the
+ * focal species. The ksrates output of both commands goes to ortholog_runs/ortholog_ksrates_logs/<A>_<B>.log; the
+ * log of an earlier run is kept, renamed with the time of its last modification.
  */
-process runParalogJob {
+process runOrthologJob {
 
+    tag "${species_1}_${species_2}"
 
     input:
-        val command_line
+        tuple val(species_1), val(species_2), val(config_path)
 
     output:
         val 'done', emit: done
 
     script:
+    expert_arg = params.expert_config ? "--expert ${params.expert_config}" : ""
+    run_dir = "${base_dir}/ortholog_runs"
+    log_dir = "${run_dir}/ortholog_ksrates_logs"
+    pair_table = "${run_dir}/pairs/${species_1}_${species_2}.tsv"
     """
-    ${command_line}
+    mkdir -p ${log_dir} ${run_dir}/pairs
+    printf 'Species1\\tSpecies2\\n${species_1}\\t${species_2}\\n' > ${pair_table}
+    log=${log_dir}/${species_1}_${species_2}.log
+    if [ -e "\$log" ]; then mv "\$log" "\${log%.log}.\$(date -r "\$log" +%Y%m%d_%H%M%S).log"; fi
+    cd ${run_dir}
+    {
+        ${ksrates_command} orthologs-ks ${config_path} ${expert_arg} ${species_1} ${species_2} --n-threads ${params.ortholog_threads} &&
+        ${ksrates_command} orthologs-analysis ${config_path} ${expert_arg} --ortholog-pairs ${pair_table}
+    } > "\$log" 2>&1
     """
 }
 

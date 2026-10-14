@@ -162,38 +162,6 @@ def collect_pairs_for_config(args: argparse.Namespace, config: ConfigRecord) -> 
     ]
 
 
-def build_ortholog_command(
-    args: argparse.Namespace,
-    config_path: Path,
-    species_1: str,
-    species_2: str,
-) -> List[str]:
-    command = make_ksrates_command(args, ("orthologs-ks", str(config_path)))
-    if args.expert_config is not None:
-        command.extend(("--expert", str(args.expert_config)))
-    command.extend((species_1, species_2, "--n-threads", str(args.ortholog_threads)))
-    return command
-
-
-def build_ortholog_analysis_command(
-    args: argparse.Namespace,
-    config_path: Path,
-    pair_tsv_path: Path,
-) -> List[str]:
-    """
-    orthologs-analysis is what actually estimates the Ks distribution peak and writes it (plus
-    the raw Ks list) into the shared peak_database_path/ks_list_database_path TSVs -
-    orthologs-ks on its own only produces raw local Ks values, never touching those databases.
-    Pointed at a single-pair TSV (pair_tsv_path) rather than a full per-focal ortholog_pairs file,
-    so this only ever processes the one pair orthologs-ks was just run for.
-    """
-    command = make_ksrates_command(args, ("orthologs-analysis", str(config_path)))
-    if args.expert_config is not None:
-        command.extend(("--expert", str(args.expert_config)))
-    command.extend(("--ortholog-pairs", str(pair_tsv_path)))
-    return command
-
-
 def build_check_ortholog_db_command(
     args: argparse.Namespace,
     config_path: Path,
@@ -213,8 +181,8 @@ def pair_still_needs_ortholog_ks(
     species_2: str,
 ) -> bool:
     """
-    Checks the Ks database (via 'ksrates check-ortholog-db') for a species pair, to leave out of
-    orthologs_ks_commands.sh the pairs whose peak and Ks list are already stored, e.g. computed for
+    Checks the Ks database (via 'ksrates check-ortholog-db') for a species pair, to leave out of the
+    queued pairs those whose peak and Ks list are already stored, e.g. computed for
     other datasets or by an earlier run. config_path must be a config containing both species.
     An unreachable database stops the whole run (see ks_database_has_data).
 
@@ -245,7 +213,7 @@ def global_pair_rows(
             ",".join(focals),
             chosen.config_path,
             chosen.init_run_dir,
-            queued_pairs[(species_1, species_2)],
+            "yes" if queued_pairs[(species_1, species_2)] else "no",
         )
 
 

@@ -9,17 +9,6 @@ from typing import List
 from ksrates_batch_common import ks_database_has_data, make_ksrates_command
 
 
-def build_paralog_command(
-    args: argparse.Namespace,
-    config_path: Path,
-) -> List[str]:
-    command = make_ksrates_command(args, ("paralogs-ks", str(config_path)))
-    if args.expert_config is not None:
-        command.extend(("--expert", str(args.expert_config)))
-    command.extend(("--n-threads", str(args.paralog_threads)))
-    return command
-
-
 def build_check_paralog_db_command(
     args: argparse.Namespace,
     config_path: Path,
@@ -37,8 +26,8 @@ def species_still_needs_paralog_ks(args: argparse.Namespace, config_path: Path) 
     Checks the paralog Ks database (via 'ksrates check-paralog-db') for each analysis type
     requested by --paranome/--collinearity/--reciprocal-retention. This is what makes rerunning
     this script after changing those flags (e.g. turning collinearity on for an already-populated
-    tree) cheap: without it, paralogs_ks_commands.sh would always list every unique species again,
-    submitting a job for species that already have everything they need.
+    tree) cheap: without it, every unique species would always be queued again, running a job for species
+    that already have everything they need.
 
     An unreachable database stops the whole run (see ks_database_has_data).
 
