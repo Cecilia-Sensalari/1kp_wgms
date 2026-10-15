@@ -127,6 +127,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--skip-last-datasets",
+        type=int,
+        default=None,
+        help=(
+            "With --last-datasets N: leave out the last S datasets of the table first, and then use the N before them "
+            "(N=2, S=2 gives the third and fourth to last). Default: leave out none."
+        ),
+    )
+    parser.add_argument(
         "--species-metadata",
         required=True,
         type=Path,
@@ -291,11 +300,16 @@ def main() -> None:
     metadata = read_species_metadata(args.species_metadata, args.keep_relative_paths)
     datasets = read_datasets(args.datasets)
     colorings = read_colorings(args.colorings)
+    if args.skip_last_datasets is not None and args.last_datasets is None:
+        fail("--skip-last-datasets needs --last-datasets")
     if args.last_datasets is not None:
         if args.last_datasets < 1:
             fail("--last-datasets must be at least 1")
-        datasets = datasets[-args.last_datasets:]
-        print(f"Using only the last {len(datasets)} datasets of the table: " + ", ".join(d.dataset_id for d in datasets))
+        skip = args.skip_last_datasets or 0
+        if skip < 0 or skip + args.last_datasets > len(datasets):
+            fail(f"--skip-last-datasets {skip} and --last-datasets {args.last_datasets} do not fit the {len(datasets)} datasets of the table")
+        datasets = datasets[len(datasets) - skip - args.last_datasets:len(datasets) - skip]
+        print(f"Using only {len(datasets)} datasets of the table (skipping the last {skip}): " + ", ".join(d.dataset_id for d in datasets))
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     # Each dataset's configs/, per-dataset ortholog_pairs.tsv, and per-focal init/pipeline

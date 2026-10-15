@@ -89,6 +89,7 @@ prepare_args = [
     "--max-ks-paralogs ${params.max_ks_paralogs}",
     "--max-ks-orthologs ${params.max_ks_orthologs}",
     params.test_last_datasets ? "--last-datasets ${params.test_last_datasets}" : "",
+    params.test_skip_last_datasets ? "--skip-last-datasets ${params.test_skip_last_datasets}" : "",
     params.keep_relative_paths ? "--keep-relative-paths" : "",
 ].findAll { it }.join(' ')
 
@@ -116,6 +117,7 @@ if (params.execute_ksrates_pipelines) {
         def threads = process_name == 'wgdParalogs' ? "        cpus = ${params.paralog_threads}\n" : (process_name == 'wgdOrthologs' ? "        cpus = ${params.ortholog_threads}\n" : "")
         "    withName: '${process_name}' {\n${threads}        memory = '${process_memory}'\n    }"
     }.join('\n')
+    exclude_line = params.excluded_nodes ? "    clusterOptions = '--exclude=${params.excluded_nodes.join(',')}'" : ""
     env_line = params.ksrates_code_dir ? "env.PYTHONPATH = '${params.ksrates_code_dir}'" : ""
     file("${base_dir}/ksrates_run.nextflow.config").text = """
 ${env_line}
@@ -135,6 +137,7 @@ executor {
 
 process {
     container = '${ksrates_container}'
+${exclude_line}
 ${process_resources}
 }
 """.stripIndent()
@@ -147,7 +150,7 @@ dataset_source = params.dataset_list ? "existing table ${params.dataset_list} (n
 if (!params.dataset_list && params.test_max_datasets) {
     dataset_source += ", keeping only the first ${params.test_max_datasets}"
 }
-dataset_use = params.test_last_datasets ? "only the last ${params.test_last_datasets} datasets of the table (test)" : "all datasets"
+dataset_use = params.test_last_datasets ? "only ${params.test_last_datasets} datasets of the table, after leaving out the last ${params.test_skip_last_datasets ?: 0} (test)" : "all datasets"
 yes_no = { flag -> flag ? 'yes' : 'no' }
 
 log.info """
