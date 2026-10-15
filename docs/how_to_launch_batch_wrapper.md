@@ -109,7 +109,7 @@ writes its ksrates log to `ortholog_runs/ortholog_ksrates_logs/<A>_<B>.log` or
 time, so the plain name is always the latest run.
 
 `ortholog_pairs.tsv` has no rows until `ksrates init` has been run for at least some configs (`run_init = true`).
-The log of each init job is `datasets/<hash>/<focal>/init.log`.
+The log of each init job is `datasets/<hash>/<run>/init_before_ks_estimate.log`: the output of that first init, run before the Ks values exist, to get the ortholog pairs. The ksrates pipeline of the run runs init again later and writes its own logs in `rate_adjustment/<focal>/logs_<hash>/`.
 
 ## 4. What to check afterward
 

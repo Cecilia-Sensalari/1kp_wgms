@@ -358,7 +358,7 @@ process prepareConfigs {
 
 /*
  * Runs ksrates init for one (dataset, focal species) config, in its own datasets/<hash>/<focal>/ directory. The log
- * goes to init.log there. Only started (with run_init = true) for the configs marked init_done = no in config_manifest.tsv.
+ * goes to init_before_ks.log there (the output of this first ksrates init, run to get the ortholog pairs. Only started (with run_init = true) for the configs marked init_done = no in config_manifest.tsv.
  */
 process runInit {
 
@@ -375,7 +375,7 @@ process runInit {
     """
     mkdir -p ${init_run_dir}
     cd ${init_run_dir}
-    ${ksrates_command} init ${config_path} ${expert_arg} > init.log 2>&1
+    ${ksrates_command} init ${config_path} ${expert_arg} > init_before_ks_estimate.log 2>&1
     """
 }
 
