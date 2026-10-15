@@ -460,13 +460,16 @@ process drawBranchDistanceTrees {
 
     script:
     """
+    log=${base_dir}/datasets/${dataset_id}/draw_branch_trees.log
+    echo "=== \$(date '+%Y-%m-%d %H:%M:%S') Ks-distance trees ===" >> "\$log"
+    set -o pipefail
     ${python_exec} ${SCRIPT_DIR}/draw_branch_trees.py \
         --tree distances \
         --dataset ${dataset_id} \
         --branches ${branch_table_file} \
         --manifest ${base_dir}/config_manifest.tsv \
         --palette "${params.divergence_palette}" \
-        --expert-config ${params.expert_config}
+        --expert-config ${params.expert_config} 2>&1 | tee -a "\$log"
     """
 }
 
@@ -486,13 +489,16 @@ process drawBranchTrees {
 
     script:
     """
+    log=${base_dir}/datasets/${dataset_id}/draw_branch_trees.log
+    echo "=== \$(date '+%Y-%m-%d %H:%M:%S') equal-length trees ===" >> "\$log"
+    set -o pipefail
     ${python_exec} ${SCRIPT_DIR}/draw_branch_trees.py \
         --tree equal \
         --dataset ${dataset_id} \
         --branches ${branch_table_file} \
         --manifest ${base_dir}/config_manifest.tsv \
         --species-metadata ${base_dir}/species_metadata.tsv \
-        --palette "${params.divergence_palette}"
+        --palette "${params.divergence_palette}" 2>&1 | tee -a "\$log"
     """
 }
 
