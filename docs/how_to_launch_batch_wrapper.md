@@ -34,9 +34,10 @@ All settings of the wrapper live in Nextflow config files, not in `main.nf`:
   memory, and so on. Nextflow loads it automatically and it overrides the defaults. Order of
   priority, highest first: command-line `--params`, `-c` files, `nextflow.config` in the launch
   directory, the repo's `nextflow.config`.
-- The resources of the per-dataset ksrates pipelines (stage 4) are in `batch_ksrates/ksrates_run.config`.
-  To change them for an analysis, copy that file, edit it and set `params.ksrates_run_config` in the
-  analysis' `nextflow.config`.
+- The resources of the processes inside the per-dataset ksrates pipelines (stage 4) are set here too: their CPUs follow
+  `paralog_threads` and `ortholog_threads`, their memory is the map `ksrates_pipeline_memory` and their executor
+  `ksrates_pipeline_executor`. These pipelines are separate Nextflow runs, so the settings of the `process` blocks of the
+  wrapper do not reach them; the wrapper writes these values into the `ksrates_run.nextflow.config` it gives to each of them.
 
 Example `nextflow.config` of an analysis:
 
@@ -73,7 +74,7 @@ Parameters to set in the analysis' `nextflow.config` (the full list, with defaul
   in `config_manifest.tsv`; configs already initialised are skipped), and when they have all ended runs the config
   step again, which collects the ortholog pairs from the init output. The ortholog jobs need these pairs, so
   leave it on until init has been run for all configs. The paralog jobs do not need init and start at once.
-- `execute_paralog_jobs`, `execute_ortholog_jobs`, `execute_real_pipelines` (`true` or `false`): which
+- `execute_paralog_jobs`, `execute_ortholog_jobs`, `execute_ksrates_pipelines` (`true` or `false`): which
   stages to actually run as jobs. They can be combined in one launch (also with `run_init = true`): the per-dataset pipelines then wait until every ortholog and paralog job of that launch has ended (also the failed ones, which are ignored), so they find the Ks values in the database. Check the Ks jobs before relying on the pipelines of a combined run.
 - `container_mounts` (a list of folders, default the root of the project): the folders mounted in every container the wrapper starts, i.e. the ksrates commands (init, Ks jobs, database checks) and the per-dataset ksrates pipelines. Everything those containers read or write (the transcriptome and genome FASTA and GFF files, the outputs, the ksrates code, the Ks database) has to be inside one of them. The file `ksrates_run.nextflow.config` that the wrapper writes in `base_dir` for the pipelines is generated from this list at every launch; it is not meant to be edited.
 - `expert_config`: needed if you want non-default ksrates expert settings; `use_ks_database_server = yes`

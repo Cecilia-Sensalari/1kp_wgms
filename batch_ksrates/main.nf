@@ -79,6 +79,12 @@ SCRIPT_DIR = "${workflow.projectDir}/../run_ksrates_raw"
 // mounts instead of the public vibpsb/ksrates:latest image, and is rewritten fresh on every run
 // so a changed container_mounts, ksrates_code_dir or container is always reflected.
 if (params.execute_ksrates_pipelines) {
+    // Resources of the processes of the ksrates pipeline: the threads follow paralog_threads and ortholog_threads, the memory
+    // comes from ksrates_pipeline_memory (process name -> memory)
+    process_resources = params.ksrates_pipeline_memory.collect { process_name, process_memory ->
+        def threads = process_name == 'wgdParalogs' ? "        cpus = ${params.paralog_threads}\n" : (process_name == 'wgdOrthologs' ? "        cpus = ${params.ortholog_threads}\n" : "")
+        "    withName: '${process_name}' {\n${threads}        memory = '${process_memory}'\n    }"
+    }.join('\n')
     env_line = params.ksrates_code_dir ? "env.PYTHONPATH = '${params.ksrates_code_dir}'" : ""
     file("${base_dir}/ksrates_run.nextflow.config").text = """
 ${env_line}
@@ -91,8 +97,13 @@ profiles {
     }
 }
 
+executor {
+    name = '${params.ksrates_pipeline_executor}'
+}
+
 process {
     container = '${ksrates_container}'
+${process_resources}
 }
 """.stripIndent()
 }
@@ -468,7 +479,6 @@ process runKsratesPipeline {
     nextflow run ${params.ksrates_main_nf} -profile singularity \
         --config ${config_path} \
         --expert ${params.expert_config} \
-        -c ${base_dir}/ksrates_run.nextflow.config \
-        -c ${params.ksrates_run_config}
+        -c ${base_dir}/ksrates_run.nextflow.config
     """
 }
