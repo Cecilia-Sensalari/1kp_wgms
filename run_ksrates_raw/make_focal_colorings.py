@@ -8,13 +8,17 @@ second to the next one, and so on. This script writes that list for every focal 
 the same divergence has the same colour in every plot of a branch. The colour depends on the role of the node in the
 local tree of the branch (clades A, B, C, D of focal_branch_to_dataset.tsv; D is the outgroup, i.e. the root):
 
-    node                  colour set in the config (divergence_palette)
-    ------------------------------------------------------------
-    inside A              Red
-    inside B              RoyalBlue
-    A|B                   MediumBlue
-    inside C              Goldenrod
-    (A+B)|C               #A0720A (dark gold)
+    node                                  colour set in the config (divergence_palette, in this order)
+    ------------------------------------------------------------------------------------
+    inside A, below the tested node       LightCoral (light red)
+    inside A, the tested node             Red
+    inside B                              RoyalBlue
+    A|B                                   MediumBlue
+    inside C                              Goldenrod
+    (A+B)|C                               #A0720A (dark gold)
+
+The tested node is the one whose species are exactly the A species (the node at the bottom of the tested branch); only
+A can have nodes below it, since B, C and D contribute at most two species each (one per child clade).
 
 A dataset can serve several branches (branches that select the same species), and the same node can have another role
 in each of them, e.g. the node joining two species is inside A for one branch and inside B for the other. The
@@ -39,7 +43,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
-ROLES = ("inside A", "inside B", "A|B", "inside C", "(A+B)|C")
+ROLES = ("inside A, below the tested node", "inside A", "inside B", "A|B", "inside C", "(A+B)|C")
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,16 +64,18 @@ def split_species(value: str) -> Set[str]:
 
 def node_role(leaves: Set[str], group_a: Set[str], group_b: Set[str], group_c: Set[str]) -> int:
     """Index in ROLES of an internal node of the local tree, from the species below it."""
-    if leaves <= group_a:
-        return 0
+    if leaves == group_a:
+        return ROLES.index("inside A")
+    if leaves < group_a:
+        return ROLES.index("inside A, below the tested node")
     if leaves <= group_b:
-        return 1
+        return ROLES.index("inside B")
     if leaves == group_a | group_b:
-        return 2
+        return ROLES.index("A|B")
     if leaves <= group_c:
-        return 3
+        return ROLES.index("inside C")
     if leaves == group_a | group_b | group_c:
-        return 4
+        return ROLES.index("(A+B)|C")
     raise ValueError(f"node with species {sorted(leaves)} does not fit the groups A, B, C")
 
 

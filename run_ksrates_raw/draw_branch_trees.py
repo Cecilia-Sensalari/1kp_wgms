@@ -14,21 +14,20 @@ every branch listed in the column "branches" of config_manifest.tsv this script 
              the arguments tree_hook and output_suffix; needs --expert-config.
 In both trees
   - the tested branch (the branch above clade A: the branch of the species itself if A has one species) is thick and in the
-    colour of the divergences inside A;
+    colour of the tested node ("inside A, the tested node");
   - the species are ordered from top to bottom as A, B, C, D, and inside a group as in the newick tree of the dataset, so all
     the trees of a branch have the species at the same places, whatever the run (focal species);
   - the species names are in the colour of the node that separates them from clade A (slightly darkened, NAME_DARKENING):
     A in the colour of "inside A", B in the colour of "A|B", C in the colour of "(A+B)|C", D (outgroup) in black.
   - the name of the focal species of the run has a pale background in the colour of its name, to tell
     apart the otherwise similar trees of the runs that serve the same branch.
-It runs with the python3 of the ksrates container (ete3 with its Qt rendering). A run whose requirements are missing is
-reported and skipped. Existing files are overwritten.
+A run whose requirements are missing is reported and skipped. Existing files are overwritten.
 
 Usage:  draw_branch_trees.py --tree equal|distances --dataset ID --branches focal_branch_to_dataset.tsv
                              --manifest config_manifest.tsv --palette COLORS
                              [--species-metadata species_metadata.tsv]   (equal)
                              [--expert-config config_expert.txt]         (distances)
-(--palette is the divergence_palette of the wrapper: the colours of inside A, inside B, A|B, inside C, (A+B)|C.)
+(--palette is the divergence_palette of the wrapper: one colour per role, in the order of ROLES in make_focal_colorings.py.)
 """
 
 from __future__ import annotations
@@ -41,12 +40,13 @@ from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
 from ksrates_batch_common import ksrates_species_name
+from make_focal_colorings import ROLES
 
 # No display on the cluster nodes: Qt (used by ete3 to draw) has to render offscreen, as ksrates itself does
 # (fc_manipulate_trees.py). Set before ete3 is imported.
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-PALETTE_SIZE = 5
+PALETTE_SIZE = len(ROLES)
 OUTGROUP_COLOR = "black"
 BRANCH_WIDTH = 2
 FOCAL_BRANCH_WIDTH = 4
@@ -86,10 +86,15 @@ def read_branches(path: Path, dataset: str) -> Dict[str, dict]:
         }
 
 
+def role_color(palette: List[str], role: str) -> str:
+    """Colour of a divergence role (one of ROLES) in the palette, which has one colour per role in the order of ROLES."""
+    return palette[ROLES.index(role)]
+
+
 def branch_colors(row: dict, palette: List[str], species_name: Callable[[str], str]) -> Dict[str, str]:
     """Colour of the name of each species of the branch (A, B, C), by species_name(species)."""
     colors: Dict[str, str] = {}
-    for key, color in (("A_species", palette[0]), ("B_species", palette[2]), ("C_species", palette[4])):
+    for key, color in (("A_species", role_color(palette, "inside A")), ("B_species", role_color(palette, "A|B")), ("C_species", role_color(palette, "(A+B)|C"))):
         colors.update({species_name(species): color for species in split_list(row[key])})
     return colors
 
@@ -117,7 +122,7 @@ def draw_branch_tree(row: dict, latin_names: Dict[str, str], palette: List[str],
         style["vt_line_width"] = BRANCH_WIDTH
         style["size"] = 0
         if node is focal_node:
-            style["hz_line_color"] = palette[0]
+            style["hz_line_color"] = role_color(palette, "inside A")
             style["hz_line_width"] = FOCAL_BRANCH_WIDTH
         node.set_style(style)
         node.dist = 0.125 if node.is_root() else 0.25
@@ -254,7 +259,7 @@ def main() -> None:
                         draw_branch_tree(row, latin_names, palette, focal, run_folder / f"tree_{focal}.b{branch}.pdf")
                     else:
                         tested = [ksrates_species_name(species) for species in split_list(row["A_species"])]
-                        hook = make_tree_hook(tested, branch_colors(row, palette, ksrates_species_name), palette[0], leaf_ranks(row, ksrates_species_name), focal)
+                        hook = make_tree_hook(tested, branch_colors(row, palette, ksrates_species_name), role_color(palette, "inside A"), leaf_ranks(row, ksrates_species_name), focal)
                         os.chdir(run_dir)  # ksrates reads and writes relative to the run folder
                         try:
                             plot_tree_rates(run["config_path"], expert_config, None, True, hook, f".b{branch}")
