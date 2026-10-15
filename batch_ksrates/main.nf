@@ -46,6 +46,29 @@ container_exec = "singularity exec ${mount_options} ${params.ksrates_code_dir ? 
 ksrates_command = params.ksrates_command ?: "${container_exec} ksrates"
 ksrates_container = params.ksrates_container ?: params.ksrates_sif
 
+// Python that runs every script of the wrapper (SCRIPT_DIR/*.py): the one of the ksrates container, so that all the steps use
+// the same interpreter and libraries (ete3 for the tree drawings are in there, the plain python3 of the image has neither them
+// nor ksrates). Its path is read from the first line of the ksrates launcher in the container when the pipeline starts.
+// With an own ksrates_command (ksrates without this container) the python has to be given as python_command, since it cannot be
+// guessed. The scripts that call ksrates (check-*-db of prepare_branch_ksrates_configs.py) get
+// ksrates_command in that case, and plain "ksrates" with the container, since they then already run inside it.
+if (params.ksrates_command) {
+    if (!params.python_command) {
+        error "ksrates_command is set: set python_command too, the full command of the python that runs ksrates (and has ete3), e.g. '/path/to/venv/bin/python'"
+    }
+    python_exec = params.python_command
+    script_ksrates_command = params.ksrates_command
+} else {
+    probe = ["bash", "-c", "${container_exec} sh -c 'head -n 1 \"\$(which ksrates)\"'"].execute()
+    launcher_line = probe.text.trim()
+    probe.waitFor()
+    if (!launcher_line.startsWith("#!")) {
+        error "cannot read the python of the ksrates launcher in the container ${params.ksrates_sif} (first line: '${launcher_line}')"
+    }
+    python_exec = "${container_exec} ${launcher_line.substring(2).trim()}"
+    script_ksrates_command = "ksrates"
+}
+
 // Options of prepare_branch_ksrates_configs.py that do not depend on the process inputs. They are shared by the
 // processes prepareConfigs (before ksrates init) and collectOrthologPairs (after it), which run the same script
 prepare_args = [
@@ -54,7 +77,7 @@ prepare_args = [
     "--paralog-threads ${params.paralog_threads}",
     params.db_check_workers ? "--db-check-workers ${params.db_check_workers}" : "",
     "--ortholog-threads ${params.ortholog_threads}",
-    "--ksrates-command \"${ksrates_command}\"",
+    "--ksrates-command \"${script_ksrates_command}\"",
     "--pair-scope ${params.pair_scope}",
     "--max-outgroups ${params.max_outgroups}",
     "--consensus-mode \"${params.consensus_mode}\"",
@@ -273,7 +296,7 @@ process generateSpeciesMetadata {
 
     script:
     """
-    python3 ${SCRIPT_DIR}/generate_species_metadata.py \
+    ${python_exec} ${SCRIPT_DIR}/generate_species_metadata.py \
         --species-table ${params.species_table} \
         --transcriptomes-dir ${params.transcriptomes_dir} \
         --genome-manifest ${params.genome_manifest} \
@@ -304,7 +327,7 @@ process generateDatasetList {
     // throwing most of the output away afterwards.
     max_datasets_arg = params.test_max_datasets ? "--max-datasets ${params.test_max_datasets}" : ""
     """
-    python3 ${SCRIPT_DIR}/make_branch_subtrees.py \
+    ${python_exec} ${SCRIPT_DIR}/make_branch_subtrees.py \
         --tree ${params.tree} \
         --out ${base_dir}/focal_branch_to_dataset.tsv \
         --datasets-out ${base_dir}/subtree_datasets.tsv \
@@ -340,7 +363,7 @@ process makeFocalColorings {
     script:
     branch_table = "${file(dataset_list).parent}/focal_branch_to_dataset.tsv"
     """
-    python3 ${SCRIPT_DIR}/make_focal_colorings.py --branches ${branch_table} --out ${base_dir}/focal_colorings.tsv --palette "${params.divergence_palette}"
+    ${python_exec} ${SCRIPT_DIR}/make_focal_colorings.py --branches ${branch_table} --out ${base_dir}/focal_colorings.tsv --palette "${params.divergence_palette}"
     COLORINGS=${base_dir}/focal_colorings.tsv
     """
 }
@@ -368,7 +391,7 @@ process prepareConfigs {
     script:
     """
     echo "=== config pass 1: the configs and the tables of the Ks jobs ==="
-    python3 ${SCRIPT_DIR}/prepare_branch_ksrates_configs.py --datasets ${dataset_list} --colorings ${colorings} --species-metadata ${species_metadata} --out-dir ${base_dir} ${prepare_args}
+    ${python_exec} ${SCRIPT_DIR}/prepare_branch_ksrates_configs.py --datasets ${dataset_list} --colorings ${colorings} --species-metadata ${species_metadata} --out-dir ${base_dir} ${prepare_args}
     """
 }
 
@@ -417,7 +440,7 @@ process collectOrthologPairs {
     script:
     """
     echo "=== config pass 2, after ksrates init: the same, now with the ortholog pairs of the new init output ==="
-    python3 ${SCRIPT_DIR}/prepare_branch_ksrates_configs.py --datasets ${dataset_list} --colorings ${colorings} --species-metadata ${species_metadata} --out-dir ${base_dir} ${prepare_args}
+    ${python_exec} ${SCRIPT_DIR}/prepare_branch_ksrates_configs.py --datasets ${dataset_list} --colorings ${colorings} --species-metadata ${species_metadata} --out-dir ${base_dir} ${prepare_args}
     """
 }
 
@@ -437,7 +460,7 @@ process drawBranchDistanceTrees {
 
     script:
     """
-    ${container_exec} python3 ${SCRIPT_DIR}/draw_branch_trees.py \
+    ${python_exec} ${SCRIPT_DIR}/draw_branch_trees.py \
         --tree distances \
         --dataset ${dataset_id} \
         --branches ${branch_table_file} \
@@ -463,7 +486,7 @@ process drawBranchTrees {
 
     script:
     """
-    ${container_exec} python3 ${SCRIPT_DIR}/draw_branch_trees.py \
+    ${python_exec} ${SCRIPT_DIR}/draw_branch_trees.py \
         --tree equal \
         --dataset ${dataset_id} \
         --branches ${branch_table_file} \
