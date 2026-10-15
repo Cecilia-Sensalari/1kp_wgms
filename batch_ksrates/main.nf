@@ -138,12 +138,12 @@ log.info """
 
          Stages of this run:
            species metadata and configs    yes (always)
-           ksrates init                    ${yes_no(params.run_init)}
+           ksrates initialization          ${yes_no(params.run_init)}
+           draw branch trees               ${yes_no(params.draw_branch_trees)}
            ortholog Ks jobs                ${yes_no(params.execute_ortholog_jobs)}
            paralog Ks jobs                 ${yes_no(params.execute_paralog_jobs)}
-           branch trees                    ${yes_no(params.draw_branch_trees)}
-           branch trees (adjusted)         ${yes_no(params.draw_branch_distance_trees)}
            per-dataset ksrates pipelines   ${yes_no(params.execute_ksrates_pipelines)}${params.execute_ksrates_pipelines ? ' (script: ' + params.ksrates_main_nf + ')' : ''}
+           draw branch trees (adjusted)    ${yes_no(params.draw_branch_distance_trees)}
          """
          .stripIndent()
 
