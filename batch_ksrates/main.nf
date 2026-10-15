@@ -65,8 +65,8 @@ prepare_args = [
     params.keep_relative_paths ? "--keep-relative-paths" : "",
 ].findAll { it }.join(' ')
 
-if (params.execute_real_pipelines && !params.expert_config) {
-    error "execute_real_pipelines requires expert_config (it needs use_ks_database_server " +
+if (params.execute_ksrates_pipelines && !params.expert_config) {
+    error "execute_ksrates_pipelines requires expert_config (it needs use_ks_database_server " +
         "= yes to actually benefit from the already-populated database, rather than silently " +
         "recomputing everything from scratch)"
 }
@@ -78,7 +78,7 @@ SCRIPT_DIR = "${workflow.projectDir}/../run_ksrates_raw"
 // profile + per-process resource withName blocks) but points at our own local container/bind
 // mounts instead of the public vibpsb/ksrates:latest image, and is rewritten fresh on every run
 // so a changed container_mounts, ksrates_code_dir or container is always reflected.
-if (params.execute_real_pipelines) {
+if (params.execute_ksrates_pipelines) {
     env_line = params.ksrates_code_dir ? "env.PYTHONPATH = '${params.ksrates_code_dir}'" : ""
     file("${base_dir}/ksrates_run.nextflow.config").text = """
 ${env_line}
@@ -122,7 +122,7 @@ log.info """
            ksrates init                    ${yes_no(params.run_init)}
            ortholog Ks jobs                ${yes_no(params.execute_ortholog_jobs)}
            paralog Ks jobs                 ${yes_no(params.execute_paralog_jobs)}
-           per-dataset ksrates pipelines   ${yes_no(params.execute_real_pipelines)}${params.execute_real_pipelines ? ' (script: ' + params.ksrates_main_nf + ')' : ''}
+           per-dataset ksrates pipelines   ${yes_no(params.execute_ksrates_pipelines)}${params.execute_ksrates_pipelines ? ' (script: ' + params.ksrates_main_nf + ')' : ''}
          """
          .stripIndent()
 
@@ -197,7 +197,7 @@ workflow {
     }
     // 8) Execute ksrates pipelines. If init and/or the ortholog and paralog jobs are run in the same launch, wait until
     // all of them have ended, so that the pipelines find the init output and the Ks values in the database.
-    if (params.execute_real_pipelines) {
+    if (params.execute_ksrates_pipelines) {
         pipelines_ready = prepareConfigs.out.summary
         if (params.run_init) {
             pipelines_ready = pipelines_ready.combine(init_done)
@@ -208,11 +208,11 @@ workflow {
         if (params.execute_paralog_jobs) {
             pipelines_ready = pipelines_ready.combine(paralog_done)
         }
-        real_pipeline_rows = pipelines_ready
+        ksrates_pipeline_rows = pipelines_ready
             .flatMap { file("${base_dir}/config_manifest.tsv").readLines().drop(1) }
             .map { line -> line.split('\t') }
             .map { fields -> tuple(fields[0], fields[1], fields[2], fields[3]) }
-        runRealPipeline(real_pipeline_rows)
+        runKsratesPipeline(ksrates_pipeline_rows)
     }
 }
 
@@ -455,7 +455,7 @@ process runOrthologJob {
  * in config_manifest.tsv and the shared databases at the time this runs - same as a human
  * manually running these commands one by one would do.
  */
-process runRealPipeline {
+process runKsratesPipeline {
 
     tag "${dataset_id}/${focal_species}"
 

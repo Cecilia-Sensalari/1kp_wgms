@@ -2,7 +2,7 @@
 # Runs the batch_ksrates wrapper (batch_ksrates/main.nf) for the 1kp analysis. Every setting (paths, parameters,
 # resources, which stages run) lives in /group/esb/cesen/1kp/ks_analysis/1kp/nextflow.config, which Nextflow loads
 # from the directory this script moves to; nothing is repeated here. Which stages run (run_init, execute_paralog_jobs,
-# execute_ortholog_jobs, execute_real_pipelines) is chosen there too, so that the config is the permanent record of how
+# execute_ortholog_jobs, execute_ksrates_pipelines) is chosen there too, so that the config is the permanent record of how
 # the analysis was run. Arguments given to this script (e.g. --run_init false) override the config for one launch,
 # only meant for quick tests.
 #   sbatch launch_batch_ksrates.sh
