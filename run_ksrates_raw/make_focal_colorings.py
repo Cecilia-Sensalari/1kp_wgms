@@ -25,7 +25,7 @@ is split in one run per list. The output has one row per distinct (dataset, foca
     this list, comma separated), run_tag (empty if the focal species has a single list in the dataset, else b<first
     branch>; it is added to the name of the run folder)
 
-Usage:   make_focal_colorings.py --branches focal_branch_to_dataset.tsv --out focal_colorings.tsv [--palette COLORS]
+Usage:   make_focal_colorings.py --branches focal_branch_to_dataset.tsv --out focal_colorings.tsv --palette COLORS
 Needs ete3 (the same Python environment as make_branch_subtrees.py); it reads only the small per-branch trees of the table,
 so it takes seconds.
 """
@@ -39,7 +39,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
-DEFAULT_PALETTE = "Red,LightSkyBlue,MediumBlue,Gold,Orange"
 ROLES = ("inside A", "inside B", "A|B", "inside C", "(A+B)|C")
 
 
@@ -49,8 +48,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out", required=True, type=Path, help="output table")
     parser.add_argument(
         "--palette",
-        default=DEFAULT_PALETTE,
-        help=f"{len(ROLES)} comma-separated colours, for: {', '.join(ROLES)} (default: {DEFAULT_PALETTE})",
+        required=True,
+        help=f"{len(ROLES)} comma-separated colours, for: {', '.join(ROLES)}",
     )
     return parser.parse_args()
 

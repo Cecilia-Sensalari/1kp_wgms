@@ -116,8 +116,11 @@ choice, but is not treated as focal by default.
 
 ```bash
 python3 code/1kp_wgms/run_ksrates_raw/make_branch_subtrees.py \
-  --out /path/to/ks_analysis/1kp/ksrates_raw/focal_branch_to_dataset.tsv \
-  --datasets-out /path/to/ks_analysis/1kp/ksrates_raw/subtree_datasets.tsv
+  --tree TREE.nwk --score-table SPECIES_TABLE.tsv --genome-busco-table GENOME_BUSCO.tsv \
+  --max-a 4 --max-older 2 --older-clades 3 --min-species 3 --busco-weight 0.8 --transrate-weight 0.2 \
+  --out focal_branch_to_dataset.tsv --datasets-out subtree_datasets.tsv
 ```
+
+The script has no default for any of these options: all of them are parameters of the wrapper, in `batch_ksrates/nextflow.config`, and `main.nf` passes them. The same holds for `generate_species_metadata.py` and `make_focal_colorings.py`. The example above shows how to run the script by hand.
 
 The script requires `ete3` in the active Python environment.

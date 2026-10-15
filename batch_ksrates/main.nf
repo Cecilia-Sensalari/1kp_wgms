@@ -25,14 +25,21 @@ LOG_OUTPUT = true
  * after another config file has overridden a base value.
  */
 
+if (!params.container_mounts) {
+    error "container_mounts is required: the folders to mount in the containers, e.g. container_mounts = ['/group/esb/cesen/1kp']"
+}
 if (!params.base_dir) {
     error "base_dir is required: set it in the nextflow.config of the analysis, e.g. base_dir = '/group/esb/cesen/1kp/ks_analysis/1kp'"
 }
 base_dir = file(params.base_dir)
 
+// Folders mounted in every container the wrapper starts: the ksrates command of the processes below and the containers of
+// the per-dataset ksrates pipelines (stage 4). One list, container_mounts, for both.
+mount_options = params.container_mounts.collect { "-B ${it}" }.join(' ')
+
 // Full 'ksrates' command line used by the processes that run ksrates (init, orthologs-ks, orthologs-analysis, paralogs-ks) and by
 // prepare_branch_ksrates_configs.py (check-*-db): the container, with the local ksrates checkout first on PYTHONPATH if ksrates_code_dir is set
-ksrates_command = params.ksrates_command ?: "singularity exec -B /group/esb/cesen/1kp ${params.ksrates_code_dir ? '--env PYTHONPATH=' + params.ksrates_code_dir + ' ' : ''}${params.ksrates_sif} ksrates"
+ksrates_command = params.ksrates_command ?: "singularity exec ${mount_options} ${params.ksrates_code_dir ? '--env PYTHONPATH=' + params.ksrates_code_dir + ' ' : ''}${params.ksrates_sif} ksrates"
 ksrates_container = params.ksrates_container ?: params.ksrates_sif
 
 // Options of prepare_branch_ksrates_configs.py that do not depend on the process inputs. They are shared by the
@@ -70,17 +77,8 @@ SCRIPT_DIR = "${workflow.projectDir}/../run_ksrates_raw"
 // when actually needed. Mirrors ks_analysis/test_subtree/nextflow.config's shape (singularity
 // profile + per-process resource withName blocks) but points at our own local container/bind
 // mounts instead of the public vibpsb/ksrates:latest image, and is rewritten fresh on every run
-// so a changed ks_database_server_address_path/transcriptomes_dir is always reflected.
+// so a changed container_mounts, ksrates_code_dir or container is always reflected.
 if (params.execute_real_pipelines) {
-    bind_mounts = [base_dir.toString(), params.transcriptomes_dir]
-    if (params.ksrates_code_dir) {
-        bind_mounts << params.ksrates_code_dir
-    }
-    if (params.ks_database_server_address_path) {
-        bind_mounts << file(params.ks_database_server_address_path).getParent().toString()
-    }
-    bind_options = bind_mounts.unique().collect { "-B ${it}" }.join(' ')
-
     env_line = params.ksrates_code_dir ? "env.PYTHONPATH = '${params.ksrates_code_dir}'" : ""
     file("${base_dir}/ksrates_run.nextflow.config").text = """
 ${env_line}
@@ -89,7 +87,7 @@ profiles {
         singularity.enabled = true
         singularity.cacheDir = '${params.base_dir}'
         singularity.autoMounts = true
-        singularity.runOptions = "${bind_options}"
+        singularity.runOptions = "${mount_options}"
     }
 }
 
@@ -235,6 +233,7 @@ process generateSpeciesMetadata {
     python3 ${SCRIPT_DIR}/generate_species_metadata.py \
         --species-table ${params.species_table} \
         --transcriptomes-dir ${params.transcriptomes_dir} \
+        --genome-manifest ${params.genome_manifest} \
         --genome-gff-settings ${params.genome_gff_settings} \
         --collinearity ${params.collinearity} \
         --output ${base_dir}/species_metadata.tsv

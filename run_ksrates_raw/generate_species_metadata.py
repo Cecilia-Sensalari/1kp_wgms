@@ -24,20 +24,7 @@ import sys
 from pathlib import Path
 
 
-SPECIES_TABLE = Path(
-    "/group/esb/cesen/1kp/source_data/1.species_dataset/1kp_paper_2019_suptab1_species.tsv"
-)
-TRANSCRIPTOMES_DIR = Path(
-    "/group/esb/cesen/1kp/source_data/2.transcriptomes/1kp/cngb_transcriptomes"
-)
-GENOME_MANIFEST = Path(
-    "/group/esb/cesen/1kp/source_data/2.genomes/1kp/genome_species_manifest.tsv"
-)
-FASTA_SUFFIX = "-translated-nucleotides.fa"
-GENOME_GFF_SETTINGS = Path(
-    "/group/esb/cesen/1kp/source_data/2.genomes/1kp/genome_gff_settings.tsv"
-)
-OUTPUT_PATH = Path("/group/esb/cesen/1kp/ks_analysis/1kp/species_metadata.tsv")
+FASTA_SUFFIX = "-translated-nucleotides.fa"  # naming convention of the CNGB transcriptome files
 
 
 def read_species_table(path: Path) -> dict[str, str]:
@@ -101,20 +88,20 @@ def read_genome_gff_settings(path: Path) -> dict[str, tuple[str, str]]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--species-table", type=Path, default=SPECIES_TABLE)
-    parser.add_argument("--transcriptomes-dir", type=Path, default=TRANSCRIPTOMES_DIR)
-    parser.add_argument("--genome-manifest", type=Path, default=GENOME_MANIFEST)
-    parser.add_argument("--genome-gff-settings", type=Path, default=GENOME_GFF_SETTINGS)
+    parser.add_argument("--species-table", required=True, type=Path, help="1KP species table: sample ID -> latin name")
+    parser.add_argument("--transcriptomes-dir", required=True, type=Path, help="folder with the transcriptome FASTA files")
+    parser.add_argument("--genome-manifest", required=True, type=Path, help="genome_species_manifest.tsv")
+    parser.add_argument("--genome-gff-settings", required=True, type=Path, help="genome_gff_settings.tsv")
     parser.add_argument(
         "--collinearity",
+        required=True,
         choices=("yes", "no"),
-        default="no",
         help=(
             "Collinearity (anchor pairs) analysis: written as yes in the column collinearity of the species that have a GFF, "
             "the others always get no (it needs the GFF of the focal species)."
         ),
     )
-    parser.add_argument("--output", type=Path, default=OUTPUT_PATH)
+    parser.add_argument("--output", required=True, type=Path, help="species_metadata.tsv to write")
     return parser.parse_args()
 
 

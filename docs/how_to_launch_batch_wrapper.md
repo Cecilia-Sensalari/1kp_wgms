@@ -75,6 +75,7 @@ Parameters to set in the analysis' `nextflow.config` (the full list, with defaul
   leave it on until init has been run for all configs. The paralog jobs do not need init and start at once.
 - `execute_paralog_jobs`, `execute_ortholog_jobs`, `execute_real_pipelines` (`true` or `false`): which
   stages to actually run as jobs. They can be combined in one launch (also with `run_init = true`): the per-dataset pipelines then wait until every ortholog and paralog job of that launch has ended (also the failed ones, which are ignored), so they find the Ks values in the database. Check the Ks jobs before relying on the pipelines of a combined run.
+- `container_mounts` (a list of folders, default the root of the project): the folders mounted in every container the wrapper starts, i.e. the ksrates commands (init, Ks jobs, database checks) and the per-dataset ksrates pipelines. Everything those containers read or write (the transcriptome and genome FASTA and GFF files, the outputs, the ksrates code, the Ks database) has to be inside one of them. The file `ksrates_run.nextflow.config` that the wrapper writes in `base_dir` for the pipelines is generated from this list at every launch; it is not meant to be edited.
 - `expert_config`: needed if you want non-default ksrates expert settings; `use_ks_database_server = yes`
   must be set there, or the wrapper stops.
 

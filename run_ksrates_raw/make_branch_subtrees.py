@@ -28,37 +28,24 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence
 
 
-TREE_PATH = Path(
-    "/group/esb/cesen/1kp/source_data/3.phylogenetic_tree/1kp_trees/"
-    "astral_trees_33_percent-FAA_estimated_species_tree.rooted."
-    "wgm_suptab3_mrca.nhx.manual_fixes.tree"
-)
-DEFAULT_OUT = Path(__file__).with_name("focal_branch_to_dataset.tsv")
-SCORE_TABLE = Path(
-    "/group/esb/cesen/1kp/source_data/1.species_dataset/"
-    "1kp_paper_2019_suptab1_species.tsv"
-)
-GENOME_BUSCO_TABLE = Path(
-    "/group/esb/cesen/1kp/source_data/2.genomes/1kp/genome_busco/genome_busco_scores.tsv"
-)
 BUSCO_COL = "% BUSCOs (complete+fragmented)"
 TRANSRATE_COL = "TransRate Score"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--tree", type=Path, default=TREE_PATH)
-    parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="per-branch table (focal_branch_to_dataset.tsv)")
+    parser.add_argument("--tree", required=True, type=Path, help="rooted species tree (Newick)")
+    parser.add_argument("--out", required=True, type=Path, help="per-branch table (focal_branch_to_dataset.tsv)")
     parser.add_argument(
         "--datasets-out",
         type=Path,
         default=None,
         help="per-dataset table, one row per distinct dataset_id; default: subtree_datasets.tsv next to --out",
     )
-    parser.add_argument("--max-a", type=int, default=4)
-    parser.add_argument("--max-older", type=int, default=2)
-    parser.add_argument("--older-clades", type=int, default=3)
-    parser.add_argument("--min-species", type=int, default=3)
+    parser.add_argument("--max-a", required=True, type=int, help="maximum species taken from clade A")
+    parser.add_argument("--max-older", required=True, type=int, help="maximum species taken from each older sibling clade")
+    parser.add_argument("--older-clades", required=True, type=int, help="number of older sibling clades (B, C, D...)")
+    parser.add_argument("--min-species", required=True, type=int, help="datasets with fewer species are skipped")
     parser.add_argument(
         "--max-datasets",
         type=int,
@@ -69,18 +56,18 @@ def parse_args() -> argparse.Namespace:
             "traversal/pruning cost. Unset: full run, all qualifying branches."
         ),
     )
-    parser.add_argument("--score-table", type=Path, default=SCORE_TABLE)
+    parser.add_argument("--score-table", required=True, type=Path, help="1KP species table with the BUSCO and TransRate columns")
     parser.add_argument(
         "--genome-busco-table",
+        required=True,
         type=Path,
-        default=GENOME_BUSCO_TABLE,
         help=(
             "BUSCO (complete+fragmented, run with collect_busco_scores.py) of the genome-based species, "
             "which are not in the 1KP score table. Columns species_id, busco_complete_fragmented."
         ),
     )
-    parser.add_argument("--busco-weight", type=float, default=0.8)
-    parser.add_argument("--transrate-weight", type=float, default=0.2)
+    parser.add_argument("--busco-weight", required=True, type=float, help="weight of the BUSCO percentile in the quality score")
+    parser.add_argument("--transrate-weight", required=True, type=float, help="weight of the TransRate percentile in the quality score")
     return parser.parse_args()
 
 
