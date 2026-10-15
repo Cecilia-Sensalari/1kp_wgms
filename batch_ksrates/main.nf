@@ -130,6 +130,7 @@ profiles {
 
 executor {
     name = '${params.ksrates_pipeline_executor}'
+    jobName = { "nf-\${task.process}_(\${System.getenv('KSRATES_RUN_LABEL') ?: 'ksrates'})" }
 }
 
 process {
@@ -592,6 +593,7 @@ process runKsratesPipeline {
     script:
     """
     cd ${init_run_dir}
+    export KSRATES_RUN_LABEL=${dataset_id}_${focal_species}  # the SLURM jobs of this pipeline are named nf-<step>_(<dataset>_<species>), like the pipeline jobs of the wrapper
     nextflow run ${params.ksrates_main_nf} -profile singularity \
         --config ${config_path} \
         --expert ${params.expert_config} \
