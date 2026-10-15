@@ -14,7 +14,7 @@ local tree of the branch (clades A, B, C, D of focal_branch_to_dataset.tsv; D is
     inside B              RoyalBlue
     A|B                   MediumBlue
     inside C              Goldenrod
-    (A+B)|C               #6F5410 (dark gold)
+    (A+B)|C               #A0720A (dark gold)
 
 A dataset can serve several branches (branches that select the same species), and the same node can have another role
 in each of them, e.g. the node joining two species is inside A for one branch and inside B for the other. The
