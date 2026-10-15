@@ -75,6 +75,10 @@ if (params.execute_ksrates_pipelines && !params.expert_config) {
         "recomputing everything from scratch)"
 }
 
+if (params.draw_branch_distance_trees && !params.expert_config) {
+    error "draw_branch_distance_trees requires expert_config (ksrates plot-tree needs it to read the Ks database)"
+}
+
 SCRIPT_DIR = "${workflow.projectDir}/../run_ksrates_raw"
 
 // Generated once at startup (not per-task - nothing here depends on any process output), only
@@ -138,6 +142,7 @@ log.info """
            ortholog Ks jobs                ${yes_no(params.execute_ortholog_jobs)}
            paralog Ks jobs                 ${yes_no(params.execute_paralog_jobs)}
            branch trees                    ${yes_no(params.draw_branch_trees)}
+           branch trees (adjusted)         ${yes_no(params.draw_branch_distance_trees)}
            per-dataset ksrates pipelines   ${yes_no(params.execute_ksrates_pipelines)}${params.execute_ksrates_pipelines ? ' (script: ' + params.ksrates_main_nf + ')' : ''}
          """
          .stripIndent()
@@ -239,6 +244,18 @@ workflow {
             .map { line -> line.split('\t') }
             .map { fields -> tuple(fields[0], fields[1], fields[2], fields[3]) }
         runKsratesPipeline(ksrates_pipeline_rows)
+        pipelines_done = runKsratesPipeline.out.done.collect()
+    } else {
+        pipelines_done = prepareConfigs.out.summary
+    }
+    // 9) The trees with branch lengths in Ks units and the tested branch highlighted, from the rate-adjustment of each run, so after
+    // all pipelines (or on their results of an earlier launch if execute_ksrates_pipelines is false). One job per dataset.
+    if (params.draw_branch_distance_trees) {
+        distance_tree_jobs = pipelines_done
+            .flatMap { file("${base_dir}/config_manifest.tsv").readLines().drop(1) }
+            .map { line -> line.split('\t')[0] }
+            .unique()
+        drawBranchDistanceTrees(distance_tree_jobs)
     }
 }
 
@@ -406,6 +423,32 @@ process collectOrthologPairs {
 
 
 /*
+ * Draws the trees with branch lengths in Ks units of the tested branches of one dataset (draw_branch_trees.py --tree distances): calls
+ * ksrates' plot_tree_rates() for every branch of every run, with a hook that highlights the tested branch, and writes
+ * <run folder>/rate_adjustment/<focal>/tree_<focal>_distances.b<branch>.pdf next to the ksrates tree. Needs the rate-adjustment
+ * of the runs, and the ksrates code with the tree_hook argument (ksrates_code_dir). A failure is ignored (see nextflow.config).
+ */
+process drawBranchDistanceTrees {
+
+    tag "${dataset_id}"
+
+    input:
+        val dataset_id
+
+    script:
+    """
+    ${container_exec} python3 ${SCRIPT_DIR}/draw_branch_trees.py \
+        --tree distances \
+        --dataset ${dataset_id} \
+        --branches ${branch_table_file} \
+        --manifest ${base_dir}/config_manifest.tsv \
+        --palette "${params.divergence_palette}" \
+        --expert-config ${params.expert_config}
+    """
+}
+
+
+/*
  * Draws the trees of the tested branches of one dataset (draw_branch_trees.py), inside the ksrates container, next to the
  * plots of each run: <run folder>/rate_adjustment/<focal>/tree_<focal>.b<branch>.pdf, with the focal branch in the colour of
  * "inside A" and the species names in the colour of their node (A, B, C; D in black). One job per dataset, since starting
@@ -421,6 +464,7 @@ process drawBranchTrees {
     script:
     """
     ${container_exec} python3 ${SCRIPT_DIR}/draw_branch_trees.py \
+        --tree equal \
         --dataset ${dataset_id} \
         --branches ${branch_table_file} \
         --manifest ${base_dir}/config_manifest.tsv \
@@ -512,6 +556,9 @@ process runKsratesPipeline {
 
     input:
         tuple val(dataset_id), val(focal_species), val(config_path), val(init_run_dir)
+
+    output:
+        val 'done', emit: done
 
     script:
     """
