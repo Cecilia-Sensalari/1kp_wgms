@@ -8,13 +8,13 @@ second to the next one, and so on. This script writes that list for every focal 
 the same divergence has the same colour in every plot of a branch. The colour depends on the role of the node in the
 local tree of the branch (clades A, B, C, D of focal_branch_to_dataset.tsv; D is the outgroup, i.e. the root):
 
-    node                  default colour
-    ------------------------------------
+    node                  colour set in the config (divergence_palette)
+    ------------------------------------------------------------
     inside A              Red
-    inside B              LightSkyBlue
+    inside B              RoyalBlue
     A|B                   MediumBlue
-    inside C              Gold
-    (A+B)|C               Orange
+    inside C              Goldenrod
+    (A+B)|C               #6F5410 (dark gold)
 
 A dataset can serve several branches (branches that select the same species), and the same node can have another role
 in each of them, e.g. the node joining two species is inside A for one branch and inside B for the other. The

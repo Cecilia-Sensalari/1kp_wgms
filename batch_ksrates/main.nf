@@ -33,13 +33,17 @@ if (!params.base_dir) {
 }
 base_dir = file(params.base_dir)
 
+// Table with the A, B, C and D species of every branch: next to the dataset list (written there by generateDatasetList)
+branch_table_file = "${params.dataset_list ? file(params.dataset_list).parent : base_dir}/focal_branch_to_dataset.tsv"
+
 // Folders mounted in every container the wrapper starts: the ksrates command of the processes below and the containers of
 // the per-dataset ksrates pipelines (stage 4). One list, container_mounts, for both.
 mount_options = params.container_mounts.collect { "-B ${it}" }.join(' ')
 
 // Full 'ksrates' command line used by the processes that run ksrates (init, orthologs-ks, orthologs-analysis, paralogs-ks) and by
 // prepare_branch_ksrates_configs.py (check-*-db): the container, with the local ksrates checkout first on PYTHONPATH if ksrates_code_dir is set
-ksrates_command = params.ksrates_command ?: "singularity exec ${mount_options} ${params.ksrates_code_dir ? '--env PYTHONPATH=' + params.ksrates_code_dir + ' ' : ''}${params.ksrates_sif} ksrates"
+container_exec = "singularity exec ${mount_options} ${params.ksrates_code_dir ? '--env PYTHONPATH=' + params.ksrates_code_dir + ' ' : ''}${params.ksrates_sif}"
+ksrates_command = params.ksrates_command ?: "${container_exec} ksrates"
 ksrates_container = params.ksrates_container ?: params.ksrates_sif
 
 // Options of prepare_branch_ksrates_configs.py that do not depend on the process inputs. They are shared by the
@@ -133,6 +137,7 @@ log.info """
            ksrates init                    ${yes_no(params.run_init)}
            ortholog Ks jobs                ${yes_no(params.execute_ortholog_jobs)}
            paralog Ks jobs                 ${yes_no(params.execute_paralog_jobs)}
+           branch trees                    ${yes_no(params.draw_branch_trees)}
            per-dataset ksrates pipelines   ${yes_no(params.execute_ksrates_pipelines)}${params.execute_ksrates_pipelines ? ' (script: ' + params.ksrates_main_nf + ')' : ''}
          """
          .stripIndent()
@@ -157,7 +162,7 @@ workflow {
     prepareConfigs(generateSpeciesMetadata.out.species_metadata, dataset_list_ch, makeFocalColorings.out.colorings)
     prepareConfigs.out.summary.view()
 
-    // 5) ksrates init, only for the configs whose init output is missing (init_done = no in config_manifest.tsv), and
+    // 5a) ksrates init, only for the configs whose init output is missing (init_done = no in config_manifest.tsv), and
     // then the second pass of the config script, which collects the ortholog pairs from the init output. The paralog
     // jobs below do not need init and start right after prepareConfigs.
     if (params.run_init) {
@@ -177,6 +182,16 @@ workflow {
         
     } else {
         pair_tables_ready = prepareConfigs.out.summary
+    }
+
+    // 5b) The tree of every tested branch with the focal branch highlighted, drawn next to the plots of each run (after init,
+    // which creates the folders). One job per dataset; it does not affect the Ks values.
+    if (params.draw_branch_trees) {
+        branch_tree_jobs = pair_tables_ready
+            .flatMap { file("${base_dir}/config_manifest.tsv").readLines().drop(1) }
+            .map { line -> line.split('\t')[0] }
+            .unique()
+        drawBranchTrees(branch_tree_jobs)
     }
 
     // The jobs of the next stages are read from tables that prepareConfigs writes. Each read starts from
@@ -386,6 +401,31 @@ process collectOrthologPairs {
     """
     echo "=== config pass 2, after ksrates init: the same, now with the ortholog pairs of the new init output ==="
     python3 ${SCRIPT_DIR}/prepare_branch_ksrates_configs.py --datasets ${dataset_list} --colorings ${colorings} --species-metadata ${species_metadata} --out-dir ${base_dir} ${prepare_args}
+    """
+}
+
+
+/*
+ * Draws the trees of the tested branches of one dataset (draw_branch_trees.py), inside the ksrates container, next to the
+ * plots of each run: <run folder>/rate_adjustment/<focal>/tree_<focal>.b<branch>.pdf, with the focal branch in the colour of
+ * "inside A" and the species names in the colour of their node (A, B, C; D in black). One job per dataset, since starting
+ * the container costs more than drawing. Not needed for the Ks values, so a failure is ignored (see nextflow.config).
+ */
+process drawBranchTrees {
+
+    tag "${dataset_id}"
+
+    input:
+        val dataset_id
+
+    script:
+    """
+    ${container_exec} python3 ${SCRIPT_DIR}/draw_branch_trees.py \
+        --dataset ${dataset_id} \
+        --branches ${branch_table_file} \
+        --manifest ${base_dir}/config_manifest.tsv \
+        --species-metadata ${base_dir}/species_metadata.tsv \
+        --palette "${params.divergence_palette}"
     """
 }
 
