@@ -26,10 +26,10 @@ LOG_OUTPUT = true
  */
 
 if (!params.container_mounts) {
-    error "container_mounts is required: the folders to mount in the containers, e.g. container_mounts = ['/group/esb/cesen/1kp']"
+    error "container_mounts is required: the folders to mount in the containers, e.g. container_mounts = ['/path/to/container_dir']"
 }
 if (!params.base_dir) {
-    error "base_dir is required: set it in the nextflow.config of the analysis, e.g. base_dir = '/group/esb/cesen/1kp/ks_analysis/1kp'"
+    error "base_dir is required: set it in the nextflow.config of the analysis, e.g. base_dir = '/path/to/ks_analysis/1kp'"
 }
 base_dir = file(params.base_dir)
 

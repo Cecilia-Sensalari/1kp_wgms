@@ -5,8 +5,8 @@
 The server is independent of the wrapper - launch it once, separately, and leave it running.
 
 ```bash
-cd /group/esb/cesen/1kp/ks_analysis/1kp
-sbatch /group/esb/cesen/1kp/code/1kp_wgms/launchers/launch_ks_database_server.sh
+cd /path/to/1kp/ks_analysis/1kp
+sbatch /path/to/1kp/code/1kp_wgms/launchers/launch_ks_database_server.sh
 ```
 
 It reuses the existing `ks_database/ks_database_sqld_data`/`ks_database_sqld_keys` if
@@ -15,7 +15,7 @@ already present (no data lost across restarts), and writes a fresh `host:port` t
 node it landed on, and confirm it's actually up before running the wrapper:
 
 ```bash
-cat /group/esb/cesen/1kp/ks_analysis/1kp/ks_database/ks_database_server_address.txt
+cat /path/to/1kp/ks_analysis/1kp/ks_database/ks_database_server_address.txt
 ```
 
 If this job ever gets cancelled or hits a walltime limit, just resubmit the same command - the
@@ -43,9 +43,9 @@ Example `nextflow.config` of an analysis:
 
 ```groovy
 params {
-    base_dir = '/group/esb/cesen/1kp/ks_analysis/1kp'
-    ks_database_server_address_path = '/group/esb/cesen/1kp/ks_analysis/1kp/ks_database/ks_database_server_address.txt'
-    expert_config = '/group/esb/cesen/1kp/ks_analysis/1kp/config_expert.txt'
+    base_dir = '/path/to/1kp/ks_analysis/1kp'
+    ks_database_server_address_path = '/path/to/1kp/ks_analysis/1kp/ks_database/ks_database_server_address.txt'
+    expert_config = '/path/to/1kp/ks_analysis/1kp/config_expert.txt'
 }
 process {
     withName: 'runOrthologJob' { maxForks = 200 }
@@ -56,7 +56,7 @@ process {
 Then launch it with the launcher, which moves to the analysis directory (so its `nextflow.config` is used) and runs Nextflow; it repeats none of the settings. A launch starts from scratch; pass `-resume` to continue the last run (see the comments in the launcher for its pitfalls). Which stages run, like every other setting, is chosen in the analysis' `nextflow.config` and not on the command line: the config file is the permanent record of how the analysis was run, and it is the same for every rerun.
 
 ```bash
-sbatch /group/esb/cesen/1kp/code/1kp_wgms/launchers/launch_batch_ksrates.sh
+sbatch /path/to/1kp/code/1kp_wgms/launchers/launch_batch_ksrates.sh
 ```
 
 A command-line option such as `--run_init false` overrides the config for one launch (Nextflow gives it priority). Use it only for a quick test, since nothing keeps a record of it.

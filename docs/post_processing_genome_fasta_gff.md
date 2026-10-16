@@ -97,12 +97,12 @@ attribute other than ID, Name and Parent unchanged, with a warning that it is no
 ### Reproduction
 
 ```bash
-cd /group/esb/cesen/1kp/source_data/2.genomes/1kp/genome_species
+cd /path/to/1kp/source_data/2.genomes/1kp/genome_species
 O=post_processing_fasta_gff_logs/Chabr_v0.1
-bash /group/esb/cesen/1kp/code/1kp_wgms/others/post_process_genome_fasta_gff/rename_fasta_to_locus_tag.sh \
+bash /path/to/1kp/code/1kp_wgms/others/post_process_genome_fasta_gff/rename_fasta_to_locus_tag.sh \
     $O/GCA_003427395.1_Cbr_1.0_cds_from_genomic_ORIGINAL.fna \
     GCA_003427395.1_Cbr_1.0_cds_from_genomic.locus_tag.fna
-bash /group/esb/cesen/1kp/code/1kp_wgms/others/post_process_genome_fasta_gff/merge_gff_gene_fragments.sh \
+bash /path/to/1kp/code/1kp_wgms/others/post_process_genome_fasta_gff/merge_gff_gene_fragments.sh \
     $O/GCA_003427395.1_Cbr_1.0_genomic_ORIGINAL.gff \
     GCA_003427395.1_Cbr_1.0_genomic.merged_genes.gff
 ```
@@ -158,14 +158,14 @@ points to the original GFF. For the collinearity analysis use `gff_feature = mRN
 ### Reproduction
 
 ```bash
-cd /group/esb/cesen/1kp/source_data/2.genomes/1kp/genome_species
+cd /path/to/1kp/source_data/2.genomes/1kp/genome_species
 O=post_processing_fasta_gff_logs/Cyame_v1.0
-bash /group/esb/cesen/1kp/code/1kp_wgms/others/post_process_genome_fasta_gff/rename_fasta_to_locus_tag.sh \
+bash /path/to/1kp/code/1kp_wgms/others/post_process_genome_fasta_gff/rename_fasta_to_locus_tag.sh \
     $O/GCF_000091205.1_ASM9120v1_cds_from_genomic.fna \
     GCF_000091205.1_ASM9120v1_cds_from_genomic.locus_tag.fna
 # GFF check: expect 5373 gene lines in input and output and no status line listed. The output
 # ($O/...merged_genes.gff) is identical to the input and can be deleted; only the log is kept.
-bash /group/esb/cesen/1kp/code/1kp_wgms/others/post_process_genome_fasta_gff/merge_gff_gene_fragments.sh \
+bash /path/to/1kp/code/1kp_wgms/others/post_process_genome_fasta_gff/merge_gff_gene_fragments.sh \
     GCF_000091205.1_ASM9120v1_genomic.gff \
     $O/GCF_000091205.1_ASM9120v1_genomic.merged_genes.gff
 ```
@@ -202,7 +202,7 @@ affected. The sequence lines are unchanged.
 ### Reproduction
 
 ```bash
-cd /group/esb/cesen/1kp/source_data/2.genomes/1kp/genome_species
+cd /path/to/1kp/source_data/2.genomes/1kp/genome_species
 O=post_processing_fasta_gff_logs/Solly_iTAGv2.3
 awk -v map="$O/ITAG2.3_cds.short_ids.fasta.mapping.tsv" '/^>/ { id = substr($1, 2); print ">" id; print id "\t" substr($0, 2) > map; next } { print }' \
     $O/ITAG2.3_cds_ORIGINAL.fasta > ITAG2.3_cds.short_ids.fasta
@@ -238,7 +238,7 @@ attributes, so the GFF parser cannot use it. It was converted to GFF3 with an aw
 ### Reproduction
 
 ```bash
-cd /group/esb/cesen/1kp/source_data/2.genomes/1kp/genome_species
+cd /path/to/1kp/source_data/2.genomes/1kp/genome_species
 awk 'BEGIN { FS = OFS = "\t"; print "##gff-version 3" } /^#/ { print; next } NF == 9 { if ($3 == "gene") $9 = "ID=" $9 ";Name=" $9; else $9 = "Parent=" $9 } { print }' \
     post_processing_fasta_gff_logs/Pinta_v2.0/Pita.2_01_ORIGINAL.gtf > Pita.2_01.gff3
 ```
