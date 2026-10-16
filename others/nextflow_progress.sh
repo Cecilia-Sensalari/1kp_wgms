@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Compact progress of a Nextflow run, one line per process, from its trace file (trace/trace_<date>_<time>.txt in
+# Compact progress of a Nextflow run, one line per process, from its trace file (trace/trace_<date>_<time>.tsv in
 # the folder the run was launched from, written by the "trace" block of batch_ksrates/nextflow.config).
 # The trace file has a line for every task that has ENDED, not for the running ones.
 #
-# Usage:   nextflow_progress.sh [TRACE_FILE]         (default: the newest trace/trace_*.txt of the current folder)
+# Usage:   nextflow_progress.sh [TRACE_FILE]         (default: the newest trace/trace_*.tsv of the current folder)
 # Live:    watch -n 30 nextflow_progress.sh
 # Output:  process, tasks completed, tasks failed (with errorStrategy 'ignore' they do not stop the run),
 #          cached, other (e.g. aborted)
 
 set -euo pipefail
 
-trace=${1:-$(ls -t trace/trace_*.txt 2>/dev/null | head -n 1 || true)}
+trace=${1:-$(ls -t trace/trace_*.tsv 2>/dev/null | head -n 1 || true)}
 [ -n "$trace" ] && [ -r "$trace" ] || { echo "ERROR: no trace file found (give it as argument)" >&2; exit 1; }
 
 echo "$trace"
