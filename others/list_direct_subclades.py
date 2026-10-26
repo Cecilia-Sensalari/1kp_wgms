@@ -21,7 +21,7 @@ from pathlib import Path
 
 
 DEFAULT_TAXONOMY = (
-    Path(__file__).resolve().parent.parent.parent
+    Path(__file__).resolve().parent.parent.parent.parent
     / "source_data"
     / "1.species_dataset"
     / "1kp_paper_2019_suptab1_species_ncbi_taxonomy.csv"
