@@ -14,6 +14,9 @@ transcriptome. Species with neither are reported, not silently dropped.
 For the genome species the table also gets the GFF feature and attribute that identify their genes in the GFF
 (columns gff_feature and gff_attribute), read from genome_gff_settings.tsv. They are written into the ksrates
 config of each focal species. They stay empty for transcriptomes.
+
+The same table can also have an optional column collinearity (yes, no or empty) to switch the collinearity (anchor pairs) analysis
+off, or on, for one genome species, e.g. one whose i-ADHoRe run does not finish. Empty means the value of --collinearity.
 """
 
 from __future__ import annotations
@@ -72,16 +75,24 @@ def read_genome_manifest(path: Path) -> dict[str, tuple[str, str, str]]:
     return manifest
 
 
-def read_genome_gff_settings(path: Path) -> dict[str, tuple[str, str]]:
-    """Map species_id -> (gff_feature, gff_attribute) from genome_gff_settings.tsv (both empty = no GFF)."""
-    settings: dict[str, tuple[str, str]] = {}
+def read_genome_gff_settings(path: Path) -> dict[str, tuple[str, str, str]]:
+    """Map species_id -> (gff_feature, gff_attribute, collinearity) from genome_gff_settings.tsv.
+
+    Feature and attribute both empty = no GFF. The column collinearity is optional: yes, no, or empty (or the column
+    absent) to use the general setting.
+    """
+    settings: dict[str, tuple[str, str, str]] = {}
     with path.open(newline="", encoding="utf-8-sig") as handle:
         for row in csv.DictReader(handle, delimiter="\t"):
             species_id = (row.get("species_id") or "").strip()
             if species_id:
+                collinearity = (row.get("collinearity") or "").strip().lower()
+                if collinearity not in ("", "yes", "no"):
+                    sys.exit(f"ERROR: genome species {species_id}: collinearity [{collinearity}] in {path} must be yes, no or empty")
                 settings[species_id] = (
                     (row.get("gff_feature") or "").strip(),
                     (row.get("gff_attribute") or "").strip(),
+                    collinearity,
                 )
     return settings
 
@@ -98,7 +109,8 @@ def parse_args() -> argparse.Namespace:
         choices=("yes", "no"),
         help=(
             "Collinearity (anchor pairs) analysis: written as yes in the column collinearity of the species that have a GFF, "
-            "the others always get no (it needs the GFF of the focal species)."
+            "the others always get no (it needs the GFF of the focal species). A species can override it with the column "
+            "collinearity of --genome-gff-settings."
         ),
     )
     parser.add_argument("--output", required=True, type=Path, help="species_metadata.tsv to write")
@@ -127,7 +139,7 @@ def main() -> None:
     # Fail fast: every genome species used must have its feature and attribute (empty for no GFF), and a
     # species with a GFF must have both
     for sample_id in genome_usable_ids:
-        feature, attribute = gff_settings.get(sample_id, (None, None))
+        feature, attribute, collinearity_setting = gff_settings.get(sample_id, (None, None, ""))
         has_gff = bool(genome_manifest[sample_id][2])
         if feature is None:
             sys.exit(f"ERROR: genome species {sample_id} is not in {args.genome_gff_settings}")
@@ -136,6 +148,8 @@ def main() -> None:
                 f"ERROR: genome species {sample_id}: GFF path {'set' if has_gff else 'empty'} but "
                 f"gff_feature/gff_attribute are [{feature}]/[{attribute}] in {args.genome_gff_settings}"
             )
+        if collinearity_setting == "yes" and not has_gff:
+            sys.exit(f"ERROR: genome species {sample_id} has no GFF, so collinearity cannot be yes in {args.genome_gff_settings}")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", newline="") as handle:
@@ -151,8 +165,8 @@ def main() -> None:
             writer.writerow([sample_id, str(fastas_by_id[sample_id]), latin_name, "", "", "", "no"])
         for sample_id in genome_usable_ids:
             latin_name, cds_filepath, gff_filepath = genome_manifest[sample_id]
-            feature, attribute = gff_settings[sample_id]
-            collinearity = args.collinearity if gff_filepath else "no"
+            feature, attribute, collinearity_setting = gff_settings[sample_id]
+            collinearity = (collinearity_setting or args.collinearity) if gff_filepath else "no"
             writer.writerow([sample_id, cds_filepath, latin_name, gff_filepath, feature, attribute, collinearity])
 
     total = len(transcriptome_usable_ids) + len(genome_usable_ids)
