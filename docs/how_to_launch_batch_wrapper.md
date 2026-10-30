@@ -18,6 +18,38 @@ node it landed on, and confirm it's actually up before running the wrapper:
 cat /path/to/1kp/ks_analysis/1kp/ks_database/ks_database_server_address.txt
 ```
 
+### Data folder of the server on NFS: keep it on a local disk
+
+When `ks_database/` is on NFS, the server can crash during its log compaction: sqld swaps two files with
+`renameat2(RENAME_EXCHANGE)`, which NFS refuses (EINVAL), and the process aborts with a panic ("failed to perform
+snapshot file swap"). It happened once, with 343 species stored; the data survived and the jobs that ran in the meantime
+failed with "Cannot connect to host". The same call works on a local disk (tested on tmpfs and on the local `/tmp` of a
+node, and refused on NFS, with a small script calling `renameat2` with each flag).
+
+To avoid it, set in `nextflow.config`:
+
+```
+ks_database_local_data_dir = '/tmp/<name>_ks_database_sqld_data'   // folder on the local disk of the server's node
+ks_database_server_node = '<node>'                                  // the server has to run there
+```
+
+and submit the server with `sbatch --nodelist=<node> .../launch_ks_database_server.sh`. The launcher makes
+`ks_database/ks_database_sqld_data` a symlink to the local folder (the address file and the keys stay on NFS, and the jobs
+never open the data folder, they only talk to the server). It stops with an error on another node, or if the data folder
+is still a real folder. The data is only on that node, and `/tmp` may be cleaned: copy the folder back to NFS now and then
+with the server stopped. If the database is lost, `ksrates populate-ks-db` rebuilds it from the TSV files of the
+paralog and ortholog runs.
+
+Moving an existing database (server stopped; `<node>` is where the server will run):
+
+```bash
+cd /path/to/1kp/ks_analysis/1kp/ks_database
+srun --nodelist=<node> --mem=1G cp -a ks_database_sqld_data /tmp/<name>_ks_database_sqld_data   # copy to the local disk
+mv ks_database_sqld_data ks_database_sqld_data_nfs_backup                                     # keep the original aside
+```
+
+then set the two parameters above and start the server with `--nodelist=<node>`; the launcher creates the symlink.
+
 If this job ever gets cancelled or hits a walltime limit, just resubmit the same command - the
 data/keys persist, only the address file goes stale until resubmitted.
 
@@ -70,6 +102,11 @@ Parameters to set in the analysis' `nextflow.config` (the full list, with defaul
   to request in every generated config. Collinearity needs the GFF of the focal species, so it is decided once, when
   `species_metadata.tsv` is generated: the column `collinearity` is the parameter for the species that have a GFF
   (the genome species) and `no` for all the others. The configs and the check of the Ks database both read that column.
+  One genome species can be taken out of the collinearity analysis (or put in, if the general setting is `no`) with the optional
+  column `collinearity` (`yes`, `no` or empty = the general setting) of `genome_gff_settings.tsv`; this is what to do for a genome
+  whose i-ADHoRe step does not finish (Nelnu: it ran for over 23 hours, and it was killed at 8 GB before that). The species is
+  then stored in the Ks database with its paranome only, and its configs say `collinearity = no` from the next launch on. The
+  paranome of such a species is stored by running its paralog step once with a copy of its config with `collinearity = no`.
 - `run_init = true`: runs `ksrates init` as one Nextflow job per config whose init output is missing (`init_done = no`
   in `config_manifest.tsv`; configs already initialised are skipped), and when they have all ended runs the config
   step again, which collects the ortholog pairs from the init output. The ortholog jobs need these pairs, so
