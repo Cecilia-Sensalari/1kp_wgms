@@ -3,9 +3,29 @@
 
 For each internal non-root branch, the child node is treated as clade A.
 The output subtree keeps:
-  - up to 4 balanced representatives from A;
+  - up to 4 representatives from A;
   - up to 3 progressively older sibling clades, named B/C/D;
-  - up to 2 balanced representatives from each older clade.
+  - up to 2 representatives from each older clade.
+
+TWO SELECTION STRATEGIES are implemented, chosen with --selection:
+
+  paranome (default)
+      The current strategy, documented in docs/ortholog_ks_path_distance_calibration.md.
+      Species are ranked by MEDIAN BIN HEIGHT - the median of the 20 weighted-node bar
+      heights of their own paranome Ks distribution over Ks 0.5-2.5 - which measures
+      whether a species' Ks distribution can actually carry the analysis. For the older
+      clades B/C/D a candidate must also fall inside a Ks BUDGET, computed from the
+      concatenation-tree path distance to the A species through the calibrated power law.
+      No candidate is excluded for being too deep and no branch is skipped: instead each
+      selection carries a RELIABILITY level, because the deepest branches are exactly the
+      ones the 1KP paper made WGM calls on and a method that declines to analyse them
+      cannot check them.
+
+  quality
+      The earlier strategy: a weighted percentile of BUSCO completeness and TransRate
+      score, which is a property of the ASSEMBLY rather than of the Ks distribution.
+      Retained because the decision to drop it has not been made. It needs --score-table,
+      --genome-busco-table, --busco-weight and --transrate-weight.
 
 Two TSVs are written:
   - focal_branch_to_dataset.tsv (--out): one row per branch, with its A/B/C/D species. This is the link between
@@ -20,6 +40,7 @@ Two TSVs are written:
 from __future__ import annotations
 
 import argparse
+import collections
 import csv
 import hashlib
 import re
@@ -56,19 +77,70 @@ def parse_args() -> argparse.Namespace:
             "traversal/pruning cost. Unset: full run, all qualifying branches."
         ),
     )
-    parser.add_argument("--score-table", required=True, type=Path, help="1KP species table with the BUSCO and TransRate columns")
+    parser.add_argument(
+        "--selection",
+        choices=("paranome", "quality"),
+        default="paranome",
+        help=(
+            "How to rank candidate species. 'paranome' (default): median bin height of the "
+            "species' own paranome Ks distribution, plus the expected-Ks budget for B/C/D. "
+            "'quality': the earlier BUSCO/TransRate assembly score."
+        ),
+    )
+    parser.add_argument(
+        "--calibration-dir",
+        type=Path,
+        default=Path(__file__).resolve().parent.parent / "others" / "calibration",
+        help="directory holding calib_common.py (the calibration constants and path distances)",
+    )
+    parser.add_argument(
+        "--bin-heights",
+        type=Path,
+        default=None,
+        help="paralog_ks_bin_heights.tsv; default: the one in the calibration data directory",
+    )
+    parser.add_argument(
+        "--budget-floor",
+        type=float,
+        default=2.0,
+        help="lower bound of the expected-Ks budget for B/C/D (default 2.0)",
+    )
+    parser.add_argument(
+        "--budget-delta",
+        type=float,
+        default=0.5,
+        help=(
+            "width of the expected-Ks budget above the closest candidate of the clade "
+            "(default 0.5, about two SD of the calibration error)"
+        ),
+    )
+    parser.add_argument("--score-table", type=Path, help="1KP species table with the BUSCO and TransRate columns (--selection quality)")
     parser.add_argument(
         "--genome-busco-table",
-        required=True,
         type=Path,
         help=(
             "BUSCO (complete+fragmented, run with collect_busco_scores.py) of the genome-based species, "
             "which are not in the 1KP score table. Columns species_id, busco_complete_fragmented."
         ),
     )
-    parser.add_argument("--busco-weight", required=True, type=float, help="weight of the BUSCO percentile in the quality score")
-    parser.add_argument("--transrate-weight", required=True, type=float, help="weight of the TransRate percentile in the quality score")
-    return parser.parse_args()
+    parser.add_argument("--busco-weight", type=float, help="weight of the BUSCO percentile in the quality score (--selection quality)")
+    parser.add_argument("--transrate-weight", type=float, help="weight of the TransRate percentile in the quality score (--selection quality)")
+
+    args = parser.parse_args()
+    if args.selection == "quality":
+        missing = [
+            name
+            for name, value in (
+                ("--score-table", args.score_table),
+                ("--genome-busco-table", args.genome_busco_table),
+                ("--busco-weight", args.busco_weight),
+                ("--transrate-weight", args.transrate_weight),
+            )
+            if value is None
+        ]
+        if missing:
+            parser.error("--selection quality needs " + ", ".join(missing))
+    return args
 
 
 def load_tree(path: Path):
@@ -268,10 +340,88 @@ def load_quality_scores(args: argparse.Namespace) -> Dict[str, float]:
     return scores
 
 
+# --------------------------------------------------------------------- paranome selection
+# The current strategy. calib_common.py holds the calibrated power law, the two reliability
+# thresholds and the memoised concatenation-tree path distances; importing it keeps exactly one
+# copy of those constants in the repository, instead of a second one drifting out of step here.
+
+
+class ParanomeSelector:
+    """Rank species by median bin height, and B/C/D candidates by an expected-Ks budget."""
+
+    def __init__(self, args: argparse.Namespace):
+        sys.path.insert(0, str(args.calibration_dir))
+        try:
+            import calib_common
+        except ImportError as error:
+            sys.exit(
+                f"ERROR: --selection paranome needs calib_common.py in {args.calibration_dir} "
+                f"({error}). Pass --calibration-dir, or use --selection quality."
+            )
+        self.C = calib_common
+        bin_heights = args.bin_heights or Path(calib_common.BIN_HEIGHTS_TSV)
+        if not Path(bin_heights).exists():
+            sys.exit(
+                f"ERROR: {bin_heights} not found - run others/calibration/paralog_ks_bin_heights.py "
+                f"first, or pass --bin-heights"
+            )
+        self.scores = calib_common.median_bin_heights(str(bin_heights))
+        _, self.dist = calib_common.load_concat_tree()
+        self.floor, self.delta = args.budget_floor, args.budget_delta
+
+    # -- A ---------------------------------------------------------------------------
+    def a_species(self, node, max_a: int, order: Dict[str, int]) -> List[str]:
+        """The best A_PER_CHILD species of each direct child subclade, capped at max_a."""
+        children = [child for child in node.children if child.get_leaf_names()] or [node]
+        picked: List[str] = []
+        for child in sorted(children, key=lambda c: first_leaf_index(c, order)):
+            ranked = sorted(child.get_leaf_names(), key=lambda s: (-self.scores.get(s, 0.0), order[s]))
+            picked.extend(ranked[: self.C.A_PER_CHILD])
+        return sorted(picked[:max_a], key=order.get)
+
+    # -- B, C, D ---------------------------------------------------------------------
+    def older_species(self, clade, a_species: Sequence[str], n: int, order: Dict[str, int]):
+        """Up to n representatives of an older clade, plus the reliability of the best of them.
+
+        Every candidate is scored, none is discarded for depth: the budget decides which are
+        close enough to be worth ranking on bin height, and if nothing is inside it the budget
+        has already opened around the closest candidate, so a representative is always returned.
+        """
+        paths = {}
+        for name in clade.get_leaf_names():
+            path = self.C.median_path(name, a_species, self.dist)
+            if path is not None:
+                paths[name] = path
+        if not paths:
+            return [], None, None
+
+        expected = {name: self.C.path_to_ks(path) for name, path in paths.items()}
+        budget = max(self.floor, min(expected.values()) + self.delta)
+        inside = [name for name, ks in expected.items() if ks <= budget] or list(expected)
+        chosen = sorted(inside, key=lambda s: (-self.scores.get(s, 0.0), order[s]))[:n]
+
+        # the flag describes the closest chosen representative: that is the pair whose ortholog
+        # Ks peak anchors the rate adjustment, and the one most likely to be measurable
+        best_path = min(paths[name] for name in chosen)
+        return sorted(chosen, key=order.get), best_path, self.C.path_reliability(best_path)
+
+
+WORST_FIRST = {"unreliable": 0, "grey": 1, "reliable": 2}
+
+
+def overall_reliability(levels: Iterable[Optional[str]]) -> str:
+    """The best level among B/C/D: one usable outgroup is enough to anchor the adjustment."""
+    present = [level for level in levels if level]
+    if not present:
+        return "none"
+    return max(present, key=lambda level: WORST_FIRST[level])
+
+
 def rows_for_tree(
     tree,
     args: argparse.Namespace,
     scores: Dict[str, float],
+    selector: Optional["ParanomeSelector"] = None,
 ) -> Iterable[List[str]]:
     order = leaf_order(tree)
     older_labels = ["B", "C", "D"]
@@ -282,12 +432,26 @@ def rows_for_tree(
             continue
 
         branch_index += 1
-        groups = {"A": a_species(node, args.max_a, order, scores)}
-        for label, clade in zip(
-            older_labels,
-            older_sibling_clades(node, args.older_clades),
-        ):
-            groups[label] = balanced_species(clade, args.max_older, order, scores)
+        paths: Dict[str, Optional[float]] = {}
+        levels: Dict[str, Optional[str]] = {}
+        if selector is None:
+            groups = {"A": a_species(node, args.max_a, order, scores)}
+            for label, clade in zip(
+                older_labels,
+                older_sibling_clades(node, args.older_clades),
+            ):
+                groups[label] = balanced_species(clade, args.max_older, order, scores)
+        else:
+            groups = {"A": selector.a_species(node, args.max_a, order)}
+            for label, clade in zip(
+                older_labels,
+                older_sibling_clades(node, args.older_clades),
+            ):
+                picked, path, level = selector.older_species(
+                    clade, groups["A"], args.max_older, order
+                )
+                groups[label] = picked
+                paths[label], levels[label] = path, level
 
         selected: List[str] = []
         for label in ["A", *older_labels]:
@@ -301,7 +465,7 @@ def rows_for_tree(
         if len(selected) < args.min_species:
             continue
 
-        yield [
+        row = [
             dataset_id(selected),
             branch_index,
             pruned_newick(tree, selected),
@@ -313,6 +477,14 @@ def rows_for_tree(
             ",".join(groups.get("D", [])),
             str(len(selected)),
         ]
+        # the reliability columns are empty under --selection quality, which knows nothing
+        # about path distance
+        for label in older_labels:
+            path = paths.get(label)
+            row.append("" if path is None else f"{path:.4f}")
+            row.append(levels.get(label) or "")
+        row.append(overall_reliability(levels.values()) if selector is not None else "")
+        yield row
 
 
 BRANCH_COLUMNS = [
@@ -326,6 +498,13 @@ BRANCH_COLUMNS = [
     "C_species",
     "D_species",
     "n_selected_species",
+    "B_path",
+    "B_reliability",
+    "C_path",
+    "C_reliability",
+    "D_path",
+    "D_reliability",
+    "rate_adjustment_reliability",
 ]
 DATASET_COLUMNS = [
     "dataset_id",
@@ -349,6 +528,7 @@ def merge_branches_into_datasets(
     merged: Dict[str, dict] = {}
     for row in branch_rows:
         dataset, newick, focal, target, n_selected = row[0], row[2], row[3], row[4], row[9]
+        # columns past n_selected_species are per-branch flags and do not define a dataset
         traversal_order = str(row[1])
         entry = merged.get(dataset)
         if entry is None:
@@ -388,9 +568,22 @@ def main() -> None:
     tree = load_tree(args.tree)
     print(f"Tree loaded: {len(tree.get_leaf_names())} species", flush=True)
     
-    print("Loading quality scores (1KP table and genome BUSCO)...", flush=True)
-    scores = load_quality_scores(args)
-    print(f"Quality scores loaded for {len(scores)} species", flush=True)
+    selector = None
+    scores: Dict[str, float] = {}
+    if args.selection == "quality":
+        print("Loading quality scores (1KP table and genome BUSCO)...", flush=True)
+        scores = load_quality_scores(args)
+        print(f"Quality scores loaded for {len(scores)} species", flush=True)
+    else:
+        print("Loading paranome bin heights and concatenation-tree path distances...", flush=True)
+        selector = ParanomeSelector(args)
+        print(
+            f"Median bin height for {len(selector.scores)} species; "
+            f"expected Ks = (path/{selector.C.POWER_A})^{selector.C.POWER_EXPONENT}; "
+            f"budget = max({args.budget_floor}, min + {args.budget_delta}); "
+            f"reliable to path {selector.C.RELIABLE_PATH}, grey to {selector.C.GREY_PATH}",
+            flush=True,
+        )
 
     datasets_out = args.datasets_out or args.out.with_name("subtree_datasets.tsv")
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -398,7 +591,7 @@ def main() -> None:
 
     print("Selecting species and pruning a subtree for every branch...", flush=True)
     branch_rows: List[List[str]] = []
-    for row in rows_for_tree(tree, args, scores):
+    for row in rows_for_tree(tree, args, scores, selector):
         branch_rows.append(row)
         if len(branch_rows) % 100 == 0:
             print(f"  {len(branch_rows)} branches done", flush=True)
@@ -420,6 +613,14 @@ def main() -> None:
 
     print(f"Wrote {len(branch_rows)} branches to {args.out}")
     print(f"Wrote {len(dataset_rows)} distinct datasets to {datasets_out}")
+
+    if selector is not None:
+        counts = collections.Counter(row[-1] for row in branch_rows)
+        total = sum(counts.values()) or 1
+        print("Rate-adjustment reliability of the branches (best of B/C/D):")
+        for level in ("reliable", "grey", "unreliable", "none"):
+            if counts[level]:
+                print(f"  {level:<11}{counts[level]:>6}  ({100 * counts[level] / total:4.1f}%)")
 
 
 if __name__ == "__main__":

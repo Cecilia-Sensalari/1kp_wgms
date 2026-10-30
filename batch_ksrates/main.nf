@@ -330,19 +330,30 @@ process generateDatasetList {
     // it stops traversing the tree early instead of walking/pruning all ~2354 branches and
     // throwing most of the output away afterwards.
     max_datasets_arg = params.test_max_datasets ? "--max-datasets ${params.test_max_datasets}" : ""
+    // Only one of the two option groups is meaningful, so only that one is passed: the script
+    // rejects a "quality" run with a missing BUSCO option instead of silently scoring on nothing.
+    if (params.selection == "quality") {
+        selection_args = "--selection quality" +
+            " --score-table ${params.score_table}" +
+            " --genome-busco-table ${params.genome_busco_table}" +
+            " --busco-weight ${params.busco_weight}" +
+            " --transrate-weight ${params.transrate_weight}"
+    } else {
+        selection_args = "--selection paranome" +
+            " --budget-floor ${params.budget_floor}" +
+            " --budget-delta ${params.budget_delta}" +
+            (params.bin_heights ? " --bin-heights ${params.bin_heights}" : "")
+    }
     """
     ${python_exec} ${SCRIPT_DIR}/make_branch_subtrees.py \
         --tree ${params.tree} \
         --out ${base_dir}/focal_branch_to_dataset.tsv \
         --datasets-out ${base_dir}/subtree_datasets.tsv \
-        --score-table ${params.score_table} \
-        --genome-busco-table ${params.genome_busco_table} \
         --max-a ${params.max_a} \
         --max-older ${params.max_older} \
         --older-clades ${params.older_clades} \
         --min-species ${params.min_species} \
-        --busco-weight ${params.busco_weight} \
-        --transrate-weight ${params.transrate_weight} \
+        ${selection_args} \
         ${max_datasets_arg}
     DATASET_LIST=${base_dir}/subtree_datasets.tsv
     """
