@@ -44,6 +44,12 @@ LOCATION=$(dirname "$ADDRESS_PATH")
 # node (sbatch --nodelist=<node> ...), where the local folder is.
 LOCAL_DATA_DIR=$(param ks_database_local_data_dir)
 SERVER_NODE=$(param ks_database_server_node)
+
+# Optional: port sqld listens on (ks_database_server_port in the nextflow.config). Unset = ksrates' default, 8080.
+# Two servers cannot share a port on one node, so give each analysis its own port when they run on the same node.
+PORT=$(param ks_database_server_port)
+PORT_OPTION=()
+[ -z "$PORT" ] || PORT_OPTION=(--port "$PORT")
 LOCAL_BIND=()
 if [ -n "$LOCAL_DATA_DIR" ]; then
     [ -z "$SERVER_NODE" ] || [ "$(hostname -s)" = "$SERVER_NODE" ] || \
@@ -76,4 +82,4 @@ singularity exec \
     "${LOCAL_BIND[@]}" \
     "${PYTHONPATH_OPTION[@]}" \
     "$SIF" \
-    ksrates launch-ks-database-server --location "$LOCATION"
+    ksrates launch-ks-database-server --location "$LOCATION" "${PORT_OPTION[@]}"
