@@ -67,7 +67,7 @@ def main():
         if len(rows) >= 6:
             data.append((label, rows))
 
-    fig, axes = plt.subplots(4, 3, figsize=(14.5, 13.2), facecolor=SURFACE)
+    fig, axes = plt.subplots(4, 3, figsize=(14.5, 16.0), facecolor=SURFACE)
     for ax, (label, rows) in zip(axes.ravel(), data):
         ax.set_facecolor(SURFACE)
         for side in ("top", "right"):
@@ -96,54 +96,70 @@ def main():
         # the two reliability thresholds, drawn in the plot's Ks units: past the first the
         # ortholog Ks peak is a broad mode, past the second it is a flat smear and the number
         # on this axis is an extrapolation rather than anything that was ever measured
-        borderline_from, unreliable_from = C.path_to_ks(C.RELIABLE_PATH), C.path_to_ks(C.BORDERLINE_PATH)
-        for start, stop, alpha, text in (
-                (borderline_from, min(unreliable_from, high + pad), .07, "broad peak"),
-                (unreliable_from, high + pad, .16, "no measurable\npeak")):
+        # The bands are explained once, in the figure header: a per-panel caption would have to
+        # describe the ORTHOLOG Ks distribution a candidate from that zone would produce, which is
+        # a different object from the histogram of expected Ks drawn here, and twelve copies of
+        # that sentence floated free of anything visible. The shading carries the boundary on its
+        # own; an edge line would read as a third reference line next to the quartile and budget
+        # ones, which are the only two lines in this figure that mark a VALUE.
+        borderline_from, unreliable_from = (C.path_to_ks(C.RELIABLE_PATH),
+                                            C.path_to_ks(C.BORDERLINE_PATH))
+        for start, stop, alpha in ((borderline_from, min(unreliable_from, high + pad), .10),
+                                   (unreliable_from, high + pad, .22)):
             if high + pad > start:
                 ax.axvspan(start, stop, color=INK_2, alpha=alpha, lw=0, zorder=1)
-                # only label a band wide enough to hold the words, and sit it low in the
-                # panel where the bars have usually run out
-                if (stop - start) > (high + pad - (low - pad)) * .17:
-                    ax.text(start + (stop - start) * .05, .30, text,
-                            transform=ax.get_xaxis_transform(), color=INK_2, fontsize=8,
-                            va="center", zorder=7, clip_on=True,
-                            bbox=dict(fc=SURFACE, ec="none", pad=1.4, alpha=.85))
 
         quartile = np.percentile(values, 25)
         budget = max(2.0, low + DELTA)
         ax.axvline(quartile, color=INK, lw=1.5, ls=":", zorder=5)
         if budget <= high + pad:
             ax.axvline(budget, color=INK, lw=1.5, ls="--", zorder=5)
-        ax.set_ylim(0, (bottom.max() or 1) * 1.42)
+        ax.set_ylim(0, (bottom.max() or 1) * 1.52)
         ax.set_title(f"{label}   n={len(values)} candidates", color=INK, fontsize=10.5,
                      loc="left", pad=6)
         ax.set_xlim(low - pad, high + pad)
         lo_path, hi_path = paths[values.argmin()], paths[values.argmax()]
+        # the spread is only a number when both ends are on the calibration; when the top end is
+        # a bound the width of the range is unknown, so the term is dropped rather than shown as
+        # a placeholder dash
         reliable = C.path_reliability(hi_path) == "reliable"
-        shown_spread = f"{high - low:.2f}" if reliable else "-"
-        for y, text in ((.955, f"expKs {C.report_ks(low, lo_path)} - "
-                               f"{C.report_ks(high, hi_path)}   spread {shown_spread}"),
-                        (.875, f"lowest 25% keeps {int((values <= quartile).sum())}   ·   "
-                               f"min+{DELTA} keeps {int((values <= budget).sum())}")):
-            # clip_on keeps a long line from enlarging the axes' tight bounding box, which
-            # tight_layout would otherwise honour by shrinking every panel
-            ax.text(.02, y, text, transform=ax.transAxes, color=INK_2, fontsize=8.6,
-                    va="top", zorder=7, clip_on=True,
-                    bbox=dict(fc=SURFACE, ec="none", pad=1.6, alpha=.92))
+        spread = f"   (spread {high - low:.2f})" if reliable else ""
+        # "to", not a hyphen: the upper end can be ">2.7 (borderline)" and a hyphen beside a > reads as
+        # a minus sign. Each count names the rule AND its line style, since the point of the
+        # panel is to compare the adopted budget against the quantile rule that was rejected
+        # A real legend rather than typed words: each row carries a sample of the line it
+        # describes, so "which line is the budget" is answered in the panel instead of from the
+        # figure header. The Ks range goes in the legend title, left-aligned like the rows.
+        handles = [plt.Line2D([], [], color=INK, lw=1.5, ls="--"),
+                   plt.Line2D([], [], color=INK, lw=1.5, ls=":")]
+        labels = [f"kept: {int((values <= budget).sum())} by min+{DELTA}",
+                  f"kept: {int((values <= quartile).sum())} by 25%"]
+        leg = ax.legend(handles, labels,
+                        title=f"expected Ks range:  {C.report_ks(low, lo_path)}  to  "
+                              f"{C.report_ks(high, hi_path)}{spread}",
+                        loc="upper left", frameon=True, framealpha=.92, edgecolor="none",
+                        facecolor=SURFACE, fontsize=8.6, title_fontsize=8.6, handlelength=2.2,
+                        handletextpad=.7, borderpad=.5, labelspacing=.4, borderaxespad=.4)
+        leg._legend_box.align = "left"
+        leg.get_title().set_color(INK_2)
+        for text_item in leg.get_texts():
+            text_item.set_color(INK_2)
+        leg.set_zorder(7)
         ax.set_xlabel("expected ortholog Ks  (power law)", color=INK, fontsize=9)
     for ax in axes[:, 0]:
         ax.set_ylabel("candidate species", color=INK, fontsize=9)
 
     handles = [plt.Line2D([], [], marker="s", ls="", ms=9, color=COLOUR[g]) for g in C.GROUP_ORDER]
     fig.legend(handles, C.GROUP_ORDER, frameon=False, ncol=6, loc="upper right",
-               bbox_to_anchor=(.995, .978), fontsize=10, labelcolor=INK_2,
+               bbox_to_anchor=(.995, .973), fontsize=10, labelcolor=INK_2,
                handletextpad=.4, columnspacing=1.6)
     fig.suptitle("Expected ortholog Ks of the candidates in the sister clade, for twelve "
-                 "branches of the 1KP tree", color=INK, fontsize=14, x=.008, ha="left", y=.985)
-    fig.text(.008, .962, f"dotted line = lowest 25% of the clade   ·   dashed line = min + {DELTA}",
+                 "branches of the 1KP tree", color=INK, fontsize=14, x=.008, ha="left", y=.992)
+    fig.text(.008, .958,
+             f"shaded = past the calibration:  light Ks>{C.path_to_ks(C.RELIABLE_PATH):.1f} "
+             f"(peak broadens)  ·  dark Ks>{C.path_to_ks(C.BORDERLINE_PATH):.1f} (no peak)",
              color=INK_2, fontsize=9.5, ha="left")
-    fig.tight_layout(rect=[0, 0, 1, .952])
+    fig.tight_layout(rect=[0, 0, 1, .950])
     for ext in ("png", "pdf"):
         fig.savefig(os.path.join(args.out_dir, "expected_ks_distributions_twelve_branches." + ext),
                     dpi=165, facecolor=SURFACE)

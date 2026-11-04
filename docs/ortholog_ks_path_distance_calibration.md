@@ -139,7 +139,17 @@ An earlier version of this calibration was fitted on all 193 pairs and therefore
 to those artefacts. The 69 excluded pairs are still drawn in the figure, unfilled, because
 showing where the measurement fails is part of the result.
 
-With `path` as the response and ortholog `Ks` as the predictor, over those 124 pairs:
+With `path` as the response and ortholog `Ks` as the predictor, over those 124 pairs. That is the
+direction in which the pairs were *measured* - the bootstrap error belongs to the Ks peak - but it
+is the opposite of the direction in which the calibration is *used*, so the table gives both forms
+and the figure is drawn in the prediction direction (path on x, Ks on y). The same curve read the
+two ways looks different: `path(Ks)` has an exponent below 1 and flattens, while its inverse
+`Ks(path)` has an exponent above 1 and accelerates.
+
+Fitting the regression the other way round instead - `log(Ks)` on `log(path)`, which is formally
+the right one for prediction - gives `Ks = 2.59 * path^1.222`. Its overall median error is slightly
+lower (7.0% against 7.5%) but it is worse in every individual Ks band (6.9 / 9.0 / 7.0 against
+6.6 / 8.5 / 5.2), so the overall figure is a mixing artefact and the fit below is retained.
 
 | model | fit | inverse, used for prediction |
 |---|---|---|

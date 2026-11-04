@@ -137,40 +137,50 @@ def main():
         ax.tick_params(colors=INK_2, labelsize=9)
 
     ax = axes[0]
-    # drawn in the plot's own orientation (x = Ks, y = path); the adopted model is the power
-    # law, so it is the one in heavy ink and the others are shown for comparison
-    grid = np.linspace(0.02, ks_all.max() * 1.04, 500)
-    ax.plot(grid, slope_1 * grid, color=INK_2, lw=1.5, ls="--", alpha=.75,
+    # Drawn in the direction the calibration is USED: path in, Ks out. The models are fitted the
+    # other way round (path as the response, which is how the pairs were measured and which puts
+    # the bootstrap error on the response), so each curve below is the fitted relation inverted.
+    # Showing the fitted orientation instead needs both formulas in the legend to stay honest,
+    # since path(Ks) flattens while its inverse Ks(path) accelerates - the same curve, read twice.
+    grid = np.linspace(1e-3, dist_all.max() * 1.04, 600)
+    ax.plot(grid, grid / slope_1, color=INK_2, lw=1.5, ls="--", alpha=.75,
             label=f"linear, fitted on Ks$\\leq$1   (Ks = {1 / slope_1:.2f}$\\times$path)")
-    ax.plot(grid, slope_2 * grid, color=INK_2, lw=1.5, ls=":", alpha=.75,
+    ax.plot(grid, grid / slope_2, color=INK_2, lw=1.5, ls=":", alpha=.75,
             label=f"linear, fitted on Ks$\\leq$2   (Ks = {1 / slope_2:.2f}$\\times$path)")
-    ax.plot(grid, sat_max * (1 - np.exp(-sat_k * grid)), color=INK_2, lw=1.5, ls="-.", alpha=.75,
-            label="saturating (unidentifiable, not used)")
-    ax.plot(grid, power_a * grid ** power_c, color=INK, lw=2.6,
-            label=f"ADOPTED  ·  power law\n   Ks = (path/{power_a:.4f})$^{{{1 / power_c:.3f}}}$")
-    top = dist_all.max() * 1.06
-    ax.axhspan(C.RELIABLE_PATH, C.BORDERLINE_PATH, color="#c8a23a", alpha=.13, lw=0, zorder=0)
-    ax.axhspan(C.BORDERLINE_PATH, top, color=INK_2, alpha=.17, lw=0, zorder=0)
-    for y, text in ((C.RELIABLE_PATH, f"path {C.RELIABLE_PATH}  ·  peak broadens, still locatable"),
-                    (C.BORDERLINE_PATH, f"path {C.BORDERLINE_PATH}  ·  distribution is a flat smear — "
-                                  f"the Ks above are not measurements")):
-        ax.axhline(y, color=INK_2, lw=1.1, ls=(0, (1, 2)), zorder=4)
-        ax.text(ks_all.max() * .995, y + 0.045, text, color=INK, fontsize=8.3, ha="right",
-                va="bottom", zorder=8,
-                bbox=dict(fc=SURFACE, ec="none", pad=1.8, alpha=.88))
-    ax.set_ylim(-0.08, top)
-    ax.scatter(ks_all[~trusted], dist_all[~trusted], s=34, c="none", marker="o",
+    # the saturating fit has an asymptote in path at sat_max, so its inverse only exists below it
+    sat_grid = grid[grid < sat_max * 0.999]
+    ax.plot(sat_grid, -np.log(1 - sat_grid / sat_max) / sat_k, color=INK_2, lw=1.5, ls="-.",
+            alpha=.75, label="saturating (unidentifiable, not used)")
+    ax.plot(grid, (grid / power_a) ** (1 / power_c), color=INK, lw=2.6,
+            label=f"ADOPTED  ·  power law\n"
+                  f"   Ks = (path/{power_a:.4f})$^{{{1 / power_c:.3f}}}$")
+
+    right = dist_all.max() * 1.05
+    ax.axvspan(C.RELIABLE_PATH, C.BORDERLINE_PATH, color="#c8a23a", alpha=.13, lw=0, zorder=0)
+    ax.axvspan(C.BORDERLINE_PATH, right, color=INK_2, alpha=.17, lw=0, zorder=0)
+    top = ks_all.max() * 1.06
+    for x, text in ((C.RELIABLE_PATH, f"path {C.RELIABLE_PATH}  ·  peak broadens, still locatable"),
+                    (C.BORDERLINE_PATH, f"path {C.BORDERLINE_PATH}  ·  flat smear, these Ks are not measurements")):
+        ax.axvline(x, color=INK_2, lw=1.1, ls=(0, (1, 2)), zorder=4)
+        ax.text(x - right * .008, 0.02, text, color=INK, fontsize=8.3, rotation=90,
+                ha="right", va="bottom", transform=ax.get_xaxis_transform(), zorder=8,
+                bbox=dict(fc=SURFACE, ec="none", pad=1.6, alpha=.88))
+
+    ax.scatter(dist_all[~trusted], ks_all[~trusted], s=34, c="none", marker="o",
                edgecolors=INK_2, linewidths=1.0, alpha=.55, zorder=2,
                label=f"excluded from the fit  (n={n_excluded})")
     for tag, colour, marker, label in (("1kp", SERIES_1, "o", "1kp database"),
                                        ("master1", SERIES_2, "^", "master_1_2026 database")):
         m = source == tag
-        ax.errorbar(ks[m], dist[m], xerr=sd[m], fmt="none", ecolor=colour, elinewidth=.9, alpha=.45)
-        ax.scatter(ks[m], dist[m], s=40, c=colour, marker=marker, edgecolors=SURFACE,
+        ax.errorbar(dist[m], ks[m], yerr=sd[m], fmt="none", ecolor=colour, elinewidth=.9, alpha=.45)
+        ax.scatter(dist[m], ks[m], s=40, c=colour, marker=marker, edgecolors=SURFACE,
                    linewidths=1.1, zorder=3, label=f"{label}  (n={m.sum()})")
-    ax.set_xlabel("ortholog Ks peak (mode; bars = bootstrap SD)", color=INK, fontsize=10.5)
-    ax.set_ylabel("concat-tree path distance (subst./site)", color=INK, fontsize=10.5)
-    ax.set_title("A   The point cloud", color=INK, fontsize=12, loc="left", pad=9)
+    ax.set_xlim(-0.03, right)
+    ax.set_ylim(-0.15, top)
+    ax.set_xlabel("concat-tree path distance (subst./site)   —   the input", color=INK, fontsize=10.5)
+    ax.set_ylabel("ortholog Ks peak (mode; bars = bootstrap SD)", color=INK, fontsize=10.5)
+    ax.set_title("A   The point cloud, in the direction the calibration is used",
+                 color=INK, fontsize=12, loc="left", pad=9)
     ax.legend(frameon=True, framealpha=.88, edgecolor="none", facecolor=SURFACE,
               fontsize=8.5, loc="upper left", labelcolor=INK_2)
 
