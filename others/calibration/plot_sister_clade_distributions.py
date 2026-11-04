@@ -96,9 +96,9 @@ def main():
         # the two reliability thresholds, drawn in the plot's Ks units: past the first the
         # ortholog Ks peak is a broad mode, past the second it is a flat smear and the number
         # on this axis is an extrapolation rather than anything that was ever measured
-        grey_from, unreliable_from = C.path_to_ks(C.RELIABLE_PATH), C.path_to_ks(C.GREY_PATH)
+        borderline_from, unreliable_from = C.path_to_ks(C.RELIABLE_PATH), C.path_to_ks(C.BORDERLINE_PATH)
         for start, stop, alpha, text in (
-                (grey_from, min(unreliable_from, high + pad), .07, "broad peak"),
+                (borderline_from, min(unreliable_from, high + pad), .07, "broad peak"),
                 (unreliable_from, high + pad, .16, "no measurable\npeak")):
             if high + pad > start:
                 ax.axvspan(start, stop, color=INK_2, alpha=alpha, lw=0, zorder=1)

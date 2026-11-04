@@ -110,7 +110,7 @@ One row per branch.
 - `n_selected_species`: total number of species retained in the row.
 - `B_path`, `C_path`, `D_path`: median concatenation-tree path distance from the A species to the
   closest representative chosen for that clade. Empty under `--selection quality`.
-- `B_reliability`, `C_reliability`, `D_reliability`: `reliable` (path <= 1.0), `grey` (<= 1.5) or
+- `B_reliability`, `C_reliability`, `D_reliability`: `reliable` (path <= 1.0), `borderline` (<= 1.5) or
   `unreliable`, for that same closest representative - the pair whose ortholog Ks peak anchors the
   rate adjustment.
 - `rate_adjustment_reliability`: the best of the three, since one usable outgroup is enough to
@@ -119,7 +119,7 @@ One row per branch.
 A flagged branch is still analysed in full. The flag belongs to the *rate adjustment*, not to the
 WGM call: clade A's own paranome Ks distribution is unaffected by how distant the outgroup is, so
 the caveat is "branch assignment uncertain", not "WGM call invalid". Over the 1KP tree the chosen
-representative is `reliable` for 87.3% of the 7054 B/C/D slots, `grey` for 6.3% and `unreliable`
+representative is `reliable` for 87.3% of the 7054 B/C/D slots, `borderline` for 6.3% and `unreliable`
 for 6.4%.
 
 ## Output Columns: `subtree_datasets.tsv`

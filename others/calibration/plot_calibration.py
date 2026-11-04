@@ -149,10 +149,10 @@ def main():
     ax.plot(grid, power_a * grid ** power_c, color=INK, lw=2.6,
             label=f"ADOPTED  ·  power law\n   Ks = (path/{power_a:.4f})$^{{{1 / power_c:.3f}}}$")
     top = dist_all.max() * 1.06
-    ax.axhspan(C.RELIABLE_PATH, C.GREY_PATH, color="#c8a23a", alpha=.13, lw=0, zorder=0)
-    ax.axhspan(C.GREY_PATH, top, color=INK_2, alpha=.17, lw=0, zorder=0)
+    ax.axhspan(C.RELIABLE_PATH, C.BORDERLINE_PATH, color="#c8a23a", alpha=.13, lw=0, zorder=0)
+    ax.axhspan(C.BORDERLINE_PATH, top, color=INK_2, alpha=.17, lw=0, zorder=0)
     for y, text in ((C.RELIABLE_PATH, f"path {C.RELIABLE_PATH}  ·  peak broadens, still locatable"),
-                    (C.GREY_PATH, f"path {C.GREY_PATH}  ·  distribution is a flat smear — "
+                    (C.BORDERLINE_PATH, f"path {C.BORDERLINE_PATH}  ·  distribution is a flat smear — "
                                   f"the Ks above are not measurements")):
         ax.axhline(y, color=INK_2, lw=1.1, ls=(0, (1, 2)), zorder=4)
         ax.text(ks_all.max() * .995, y + 0.045, text, color=INK, fontsize=8.3, ha="right",

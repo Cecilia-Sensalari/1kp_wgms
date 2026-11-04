@@ -382,15 +382,15 @@ LOG_NOISE_SD = 0.141
 # A real mode survives to about path 1.0 and is gone by 1.5. These two numbers therefore split
 # the range into three, and they are thresholds on PATH rather than on Ks because the quantity
 # that degrades is the measurability of the Ks peak, not its value.
-RELIABLE_PATH, GREY_PATH = 1.0, 1.5
-RELIABILITY_LEVELS = ("reliable", "grey", "unreliable")
+RELIABLE_PATH, BORDERLINE_PATH = 1.0, 1.5
+RELIABILITY_LEVELS = ("reliable", "borderline", "unreliable")
 
 
 def path_reliability(path):
     """How far an ortholog Ks peak measured over this path distance can be trusted.
 
     'reliable'   - the ortholog Ks distribution has a clear mode; the peak is a measurement.
-    'grey'       - the mode is broad and a large share of the Ks values fall outside the
+    'borderline' - the mode is broad and a large share of the Ks values fall outside the
                    window; usable for ordering candidates, to be reported with a warning.
     'unreliable' - the distribution is indistinguishable from a flat smear against the
                    max_ks_orthologs cutoff. The branch is still analysed (its paranome Ks
@@ -402,7 +402,7 @@ def path_reliability(path):
         return None
     if path <= RELIABLE_PATH:
         return "reliable"
-    return "grey" if path <= GREY_PATH else "unreliable"
+    return "borderline" if path <= BORDERLINE_PATH else "unreliable"
 
 
 def path_to_ks(path, conservative=False):

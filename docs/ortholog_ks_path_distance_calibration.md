@@ -314,7 +314,7 @@ the mode, which a flat smear over the 0-10 window would give as 10%:
 | **concentration** | **68%** | **55%** | **41%** | **21%** | **20%** | **17%** | **16%** | **16%** | **16%** |
 
 A real mode survives to about path 1.0 and is gone by 1.5. These two values are the thresholds
-`RELIABLE_PATH` and `GREY_PATH` in `calib_common.py`.
+`RELIABLE_PATH` and `BORDERLINE_PATH` in `calib_common.py`.
 
 **Consequences.**
 
@@ -349,7 +349,7 @@ the same Ks list, the two agree closely while a mode exists and then stop agreei
 A real mode is located to 1-2% by either estimator; a flat distribution is not located at all,
 and which value is reported depends on the bandwidth. Note that the agreement survives to path
 1.5, beyond the point at which concentration has already fallen: between 1.0 and 1.5 the mode is
-broad but still locatable, which is precisely what the grey band is meant to express - usable
+broad but still locatable, which is precisely what the borderline band is meant to express - usable
 for ordering candidates, not for quoting a number.
 
 **A measured flag, not only a predicted one.** Because the diagnostic is computed from a run's
@@ -357,7 +357,7 @@ own output, it can be reported per analysis rather than inferred from path dista
 `ortholog_distribution_quality.py` does this, calling a distribution *measured* at
 concentration >= 40%, *degraded* at >= 20%, and *no peak* below. Over the 86 distributions
 available the path-based flag and the measured verdict agree on 83 (97%), with the three
-disagreements all inside the grey band, where disagreement is what the band is for. Path
+disagreements all inside the borderline band, where disagreement is what the band is for. Path
 distance serves as the a priori warning; concentration is the a posteriori verdict, and it is
 the one to quote in results.
 
@@ -498,7 +498,7 @@ divergence whether or not Ks has saturated, so the *ordering* of candidates, whi
 rule needs, remains valid throughout. What becomes invalid is the quoted number, not the choice.
 
 Every branch is therefore analysed, and the output carries a reliability level
-(`calib_common.path_reliability`): **reliable** at path <= 1.0, **grey** to 1.5, **unreliable**
+(`calib_common.path_reliability`): **reliable** at path <= 1.0, **borderline** to 1.5, **unreliable**
 beyond. After the run the level is confirmed or corrected against the distribution actually
 obtained (3.5). The flag belongs to the *rate adjustment*, not to the WGM call: the paranome Ks
 distribution of the A species is unaffected by how distant the outgroup is. What degrades is the

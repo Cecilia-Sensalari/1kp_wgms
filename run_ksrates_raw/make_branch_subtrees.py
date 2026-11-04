@@ -406,7 +406,7 @@ class ParanomeSelector:
         return sorted(chosen, key=order.get), best_path, self.C.path_reliability(best_path)
 
 
-WORST_FIRST = {"unreliable": 0, "grey": 1, "reliable": 2}
+WORST_FIRST = {"unreliable": 0, "borderline": 1, "reliable": 2}
 
 
 def overall_reliability(levels: Iterable[Optional[str]]) -> str:
@@ -581,7 +581,7 @@ def main() -> None:
             f"Median bin height for {len(selector.scores)} species; "
             f"expected Ks = (path/{selector.C.POWER_A})^{selector.C.POWER_EXPONENT}; "
             f"budget = max({args.budget_floor}, min + {args.budget_delta}); "
-            f"reliable to path {selector.C.RELIABLE_PATH}, grey to {selector.C.GREY_PATH}",
+            f"reliable to path {selector.C.RELIABLE_PATH}, borderline to {selector.C.BORDERLINE_PATH}",
             flush=True,
         )
 
@@ -618,7 +618,7 @@ def main() -> None:
         counts = collections.Counter(row[-1] for row in branch_rows)
         total = sum(counts.values()) or 1
         print("Rate-adjustment reliability of the branches (best of B/C/D):")
-        for level in ("reliable", "grey", "unreliable", "none"):
+        for level in ("reliable", "borderline", "unreliable", "none"):
             if counts[level]:
                 print(f"  {level:<11}{counts[level]:>6}  ({100 * counts[level] / total:4.1f}%)")
 
