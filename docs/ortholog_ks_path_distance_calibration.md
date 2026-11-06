@@ -10,9 +10,9 @@ It **supersedes** the calibration described under *Indicator 2: expected ortholo
 [`make_branch_subtrees.md`](make_branch_subtrees.md), which used a single linear conversion
 factor of 1.85 and a hard Ks 2 cut-off. The definition of the A-species indicator
 (*Indicator 1: median bin height*) in that document still stands; section 2 below adds one
-measurement to it. All numbers in sections 3 and 4 were recomputed on 2026-10-30, after 86 new
+measurement to it. All numbers in sections 3 and 4 were recomputed on 2026-10-30, after 87 new
 ortholog distributions were added in two runs (`calibration_run/`, `calibration_run_deep/`),
-which took the collection from 118 to **204 pairs** and changed several of the earlier
+which took the collection from 118 to **205 pairs** and changed several of the earlier
 conclusions. Where a number has moved, the superseded value is named.
 
 The largest of those changes is that **not every one of those pairs carries a measurement.**
@@ -415,7 +415,8 @@ the one to quote in results.
 3. **The two databases are partly confounded with depth**: `master_1_2026` contributes only
    pairs below Ks 2.
 4. **The calibration is not transferable to a different `max_ks_orthologs`** without recomputing
-   the concentration table, since the uniform floor is `2 * 0.5 / max_ks_orthologs`.
+   the concentration table. The cutoff sets how much of each distribution is retained, and so
+   both the 5-95 span and the chance level derived from it.
 
 ---
 
@@ -532,6 +533,39 @@ The `min + delta` arm is what makes the rule adaptive: when every candidate is s
 budget opens up around the least-saturated one and the best available representative is still
 returned rather than none.
 
+### 5.2 Where the two constants come from
+
+`delta` is 0.5 Ks, about two standard deviations of the calibration error (3.4). Candidates
+within that of each other are not distinguishable on expected Ks at all, so inside the budget the
+choice falls to the quality of the species' own Ks distribution instead.
+
+The floor of 2.0 has a weaker provenance and this section exists to say so. It was chosen as a
+round number when the rule was first written, not derived; the value the calibration on its own
+would suggest is 2.72, the expected Ks at `RELIABLE_PATH`. The number was only tested afterwards,
+by sweeping it over the 226 slots with at least 100 candidates - the only ones where a floor can
+do anything, since 40% of slots hold a single candidate:
+
+| floor | median bin height of the pick | median expected Ks | picks beyond Ks 2.72 |
+|---|---|---|---|
+| 1.00 - 1.50 | 133 | 1.59 | 36.3% |
+| 1.75 | 187 | 1.71 | 36.3% |
+| **2.00** | **193** | **1.80** | **36.3%** |
+| 2.25 - 2.72 | 193 | 2.03 - 2.30 | 36.3% |
+| 3.00 | 193 | 2.38 | 42.5% |
+
+2.0 is the knee. Below it a third of the available distribution quality is given away
+(193 -> 133); above it the median bin height never improves again, so raising the floor only
+moves the chosen species deeper for nothing; past 2.72 it begins admitting candidates whose
+ortholog Ks peak is not a measurement. The guessed value therefore coincides with the one the
+data would have chosen, which is luck rather than method.
+
+Two limits on how much that table proves. The floor changes nothing over the survey as a whole -
+across all 7054 B/C/D slots the median clade offers two candidates - so this is a property of the
+~3% of slots that are large. And both columns are computed from bin height and expected Ks, which
+come from the same tables: the argument cannot see whether a further representative *biases the
+rate adjustment*, which is the one thing that would argue for a lower floor. That is what the
+sister-rate test (`ks_analysis/1kp/sister_rate_test/`) is measuring.
+
 **No candidate is excluded for being too deep, and no branch is skipped.** It would be possible
 to refuse any candidate beyond `RELIABLE_PATH`, since an ortholog Ks peak that cannot be
 measured cannot anchor a rate adjustment. That is rejected here for two reasons. The first is
@@ -569,7 +603,7 @@ fern/seed-plant split (1.48), the gymnosperm/angiosperm split (1.25) - that is, 
 backbone nodes carrying the 1KP paper's headline WGD claims. These are precisely the branches
 that must be analysed and flagged rather than dropped.
 
-### 5.2 A quantile budget was evaluated and rejected
+### 5.3 A quantile budget was evaluated and rejected
 
 The alternative considered was to replace the absolute Ks 2 term with a quantile - build the
 distribution of expected Ks within the clade and keep the lowest 25%. It fails in both
@@ -628,7 +662,7 @@ fraction of a Ks that is of the same order as the calibration's own error.
 candidate - which is the correct behaviour, since the choice should then rest purely on data
 availability - while the quantile discards three quarters of them for no gain.
 
-### 5.3 Recommended form
+### 5.4 Recommended form
 
 Keep an **absolute tolerance**, `budget = min_expKs + delta`, with `delta` set by the
 calibration's own error rather than by a quantile. Candidates within `delta` of the best are
@@ -855,8 +889,8 @@ Coverage gained:
 
 Only 14 of the 118 existing pairs had a path distance of 0.95 or more, and 8 of the 19 bands
 above that value were empty. That run has since been executed: 75 of its 76 pairs completed
-(the *Chlamydomonas* x *Brachiomonas* pair was abandoned, see below) and the calibration now
-rests on 193 pairs.
+(the *Chlamydomonas* x *Brachiomonas* pair was abandoned, see below), taking the calibration to
+193 pairs; the deep run of section 6.1 then added the 12 that bring it to the present 205.
 
 ## 6.1 A second, smaller run past the calibrated range
 
@@ -907,9 +941,11 @@ matplotlib) and takes no required arguments.
 | `build_calibration_pairs.py` | joins the newest ortholog peak exports to path distance -> `calibration_pairs.tsv` |
 | `plot_calibration.py` | fits the models on the trusted pairs, reports their errors, draws `ortholog_ks_vs_path_distance.*` (section 3) |
 | `alternative_predictors.py` | the Ka-ruler and omega tests (section 3.4) |
-| `plot_lycophyte_sister.py` | the lycophyte-sister figure, its candidate table and the ranking simulation (sections 4.3, 5.2) |
+| `plot_lycophyte_sister.py` | the lycophyte-sister figure, its candidate table and the ranking simulation (sections 4.3, 5.3) |
 | `plot_sister_clade_distributions.py` | the twelve-branch figure and the clade-size table (sections 4, 4.4) |
 | `ortholog_distribution_quality.py` | scores a run's ortholog Ks distributions by concentration and reports whether each peak is a measurement (section 3.5) |
+| `outgroup_term_survey.py` | the three adjustment terms and the offset `delta` for every branch, from the tree alone (section 5.5) |
+| `design_sister_rate_test.py` / `analyse_sister_rate_test.py` | build and read back the sister-rate test (section 5.5) |
 | `recommend_ortholog_pairs.py` | selects the next set of pairs worth running (section 6) |
 | `../root_to_tip_distances.py` | root-to-tip distances from the concatenation tree |
 
