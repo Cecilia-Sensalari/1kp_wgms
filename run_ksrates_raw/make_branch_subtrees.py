@@ -106,6 +106,17 @@ def parse_args() -> argparse.Namespace:
         help="lower bound of the expected-Ks budget for B/C/D (default 2.0)",
     )
     parser.add_argument(
+        "--outgroup-term-limit",
+        type=float,
+        default=None,
+        help=(
+            "largest concat-tree path distance allowed between a representative and the "
+            "outgroup it will be adjusted against (default: calib_common.RELIABLE_PATH = 1.0, "
+            "the path at which an ortholog Ks peak stops being measurable). The rate "
+            "adjustment SUBTRACTS that pair's Ks, so it has to be measurable too"
+        ),
+    )
+    parser.add_argument(
         "--budget-delta",
         type=float,
         default=0.5,
@@ -368,6 +379,8 @@ class ParanomeSelector:
         self.scores = calib_common.median_bin_heights(str(bin_heights))
         _, self.dist = calib_common.load_concat_tree()
         self.floor, self.delta = args.budget_floor, args.budget_delta
+        self.outgroup_limit = (args.outgroup_term_limit if args.outgroup_term_limit is not None
+                               else calib_common.RELIABLE_PATH)
 
     # -- A ---------------------------------------------------------------------------
     def a_species(self, node, max_a: int, order: Dict[str, int]) -> List[str]:
@@ -380,12 +393,36 @@ class ParanomeSelector:
         return sorted(picked[:max_a], key=order.get)
 
     # -- B, C, D ---------------------------------------------------------------------
-    def older_species(self, clade, a_species: Sequence[str], n: int, order: Dict[str, int]):
+    def older_species(self, clade, a_species: Sequence[str], n: int, order: Dict[str, int],
+                      outgroups: Sequence[str] = ()):
         """Up to n representatives of an older clade, plus the reliability of the best of them.
 
         Every candidate is scored, none is discarded for depth: the budget decides which are
         close enough to be worth ranking on bin height, and if nothing is inside it the budget
         has already opened around the closest candidate, so a representative is always returned.
+
+        `outgroups` are the (label, species) pairs already chosen for the OLDER clades, against
+        which this one will be adjusted. The adjustment is
+
+            Ks_adjusted = ( Ks(A,X) + Ks(A,O) - Ks(X,O) ) / 2
+
+        so Ks(X,O) has to be measurable as well, and it moves with the candidate X while the
+        budget only constrains Ks(A,X). ksrates averages the adjustment over the available
+        outgroups (`consensus_mode_for_multiple_outgroups = mean among outgroups`), so one
+        unmeasurable outgroup contaminates the mean rather than being ignored: a candidate has
+        to clear EVERY outgroup, not just one.
+
+        Candidates that do not are dropped before the ranking on bin height. When that leaves
+        nothing the budget-only pick is kept, since a branch must still produce a dataset (see
+        the methods document, 5.5), and the flag names the roles involved:
+
+            ok                     every picked representative clears every outgroup
+            saturated:D            every picked representative fails against D
+            saturated:D;partly:C   all of them fail against D, some also against C
+
+        The distinction matters: `saturated:` roles cannot be avoided by any choice inside this
+        clade and are the ones that would argue for a different outgroup, while `partly:` roles
+        still have at least one representative giving a measurable trio.
         """
         paths = {}
         for name in clade.get_leaf_names():
@@ -398,12 +435,49 @@ class ParanomeSelector:
         expected = {name: self.C.path_to_ks(path) for name, path in paths.items()}
         budget = max(self.floor, min(expected.values()) + self.delta)
         inside = [name for name, ks in expected.items() if ks <= budget] or list(expected)
-        chosen = sorted(inside, key=lambda s: (-self.scores.get(s, 0.0), order[s]))[:n]
+
+        outgroup_term = ""
+        if not outgroups:
+            chosen = sorted(inside, key=lambda s: (-self.scores.get(s, 0.0), order[s]))[:n]
+        else:
+            saturating = {name: self.saturating_roles(name, outgroups) for name in inside}
+            feasible = [name for name in inside if not saturating[name]]
+            if feasible:
+                inside = feasible
+            # no candidate clears every outgroup: take the least bad ones rather than treating
+            # the whole clade as equally saturated. A species failing only against D is worth
+            # more than one failing against C and D, because its C trios stay measurable.
+            chosen = sorted(
+                inside,
+                key=lambda s: (len(saturating[s]), -self.scores.get(s, 0.0), order[s]),
+            )[:n]
+            sets = [saturating[name] for name in chosen]
+            always = sorted(set.intersection(*sets)) if sets else []
+            sometimes = sorted(set().union(*sets) - set(always)) if sets else []
+            # `saturated:` roles fail for EVERY picked representative, so no choice inside this
+            # clade avoids them; `partly:` roles fail for some picks only, so at least one
+            # representative still gives a measurable trio with that outgroup.
+            parts = []
+            if always:
+                parts.append("saturated:" + ",".join(always))
+            if sometimes:
+                parts.append("partly:" + ",".join(sometimes))
+            outgroup_term = ";".join(parts) if parts else "ok"
 
         # the flag describes the closest chosen representative: that is the pair whose ortholog
         # Ks peak anchors the rate adjustment, and the one most likely to be measurable
         best_path = min(paths[name] for name in chosen)
-        return sorted(chosen, key=order.get), best_path, self.C.path_reliability(best_path)
+        return (sorted(chosen, key=order.get), best_path,
+                self.C.path_reliability(best_path), outgroup_term)
+
+    def saturating_roles(self, candidate: str, outgroups) -> set:
+        """Which outgroup roles form a pair with this candidate that is not measurable."""
+        failed = set()
+        for label, other in outgroups:
+            path = self.dist(candidate, other)
+            if path is None or path > self.outgroup_limit:
+                failed.add(label)
+        return failed
 
 
 WORST_FIRST = {"unreliable": 0, "borderline": 1, "reliable": 2}
@@ -434,6 +508,7 @@ def rows_for_tree(
         branch_index += 1
         paths: Dict[str, Optional[float]] = {}
         levels: Dict[str, Optional[str]] = {}
+        outgroup_terms: Dict[str, str] = {}
         if selector is None:
             groups = {"A": a_species(node, args.max_a, order, scores)}
             for label, clade in zip(
@@ -443,15 +518,19 @@ def rows_for_tree(
                 groups[label] = balanced_species(clade, args.max_older, order, scores)
         else:
             groups = {"A": selector.a_species(node, args.max_a, order)}
-            for label, clade in zip(
-                older_labels,
-                older_sibling_clades(node, args.older_clades),
-            ):
-                picked, path, level = selector.older_species(
-                    clade, groups["A"], args.max_older, order
+            clades = list(zip(older_labels, older_sibling_clades(node, args.older_clades)))
+            # oldest clade first: D is adjusted against nothing, C against D, B against both,
+            # so by the time a clade is picked every outgroup it will be subtracted against
+            # is already known (methods document, 5.5)
+            chosen_outgroups: List[tuple] = []
+            for label, clade in reversed(clades):
+                picked, path, level, term = selector.older_species(
+                    clade, groups["A"], args.max_older, order, chosen_outgroups
                 )
                 groups[label] = picked
                 paths[label], levels[label] = path, level
+                outgroup_terms[label] = term
+                chosen_outgroups = [(label, name) for name in picked] + chosen_outgroups
 
         selected: List[str] = []
         for label in ["A", *older_labels]:
@@ -483,6 +562,7 @@ def rows_for_tree(
             path = paths.get(label)
             row.append("" if path is None else f"{path:.4f}")
             row.append(levels.get(label) or "")
+            row.append(outgroup_terms.get(label, ""))
         row.append(overall_reliability(levels.values()) if selector is not None else "")
         yield row
 
@@ -500,10 +580,13 @@ BRANCH_COLUMNS = [
     "n_selected_species",
     "B_path",
     "B_reliability",
+    "B_outgroup_term",
     "C_path",
     "C_reliability",
+    "C_outgroup_term",
     "D_path",
     "D_reliability",
+    "D_outgroup_term",
     "rate_adjustment_reliability",
 ]
 DATASET_COLUMNS = [

@@ -642,6 +642,185 @@ can silently return nothing. This is the same demotion applied to the path limit
 the same reason: a survey that must reproduce deep WGM calls cannot afford a rule that answers
 "no representative" on the branches of most interest.
 
+### 5.5 The rule constrains one of the three terms it needs
+
+The adjustment of a focal species A by a sister B with outgroup O is
+
+```
+Ks_adjusted = ( Ks(A,B) + Ks(A,O) - Ks(B,O) ) / 2
+```
+
+Three ortholog peaks, each of which can be too deep to measure, and the third enters with a
+minus sign and the same weight as the other two. The budget of 5.1 constrains only `Ks(A,B)`.
+It never looks at `Ks(B,O)`, although that term moves when the candidate moves: a sister
+further from A is usually also further from the outgroup.
+
+**This is what the sister-rate test found.** In branch 667 every candidate passed the budget
+while three of them had an outgroup term beyond 2.7, and that branch produced a spread of 28%
+between the estimates its six sisters returned, against 3-14% in the other five. Sorting all 32
+sisters of the test by their outgroup term rather than by their distance to A:
+
+| Ks(B,O) | n | median \|relative deviation\| |
+|---|---|---|
+| below 2.0 | 24 | 1.8% |
+| 2.0 - 2.7 | 5 | 2.9% |
+| above 2.7 | 3 | 9.1% |
+
+**The offset is a constant of the branch, in path units.** Path distances add along the tree,
+so with S the node at which A and B split and `a`, `b`, `c` the paths from S to A, B and O:
+
+```
+path(A,B) = a + b        path(B,O) = b + c
+delta := path(B,O) - path(A,B) = c - a          <- b cancels exactly
+```
+
+`delta` is a property of the focal species and the outgroup alone. The constraint on the
+subtracted term is therefore a shifted constraint on the one the rule already applies, costing
+one subtraction and no second pass:
+
+```
+path(B,O) <= RELIABLE_PATH   <=>   path(A,B) <= RELIABLE_PATH - delta
+```
+
+**Both conditions limit the same thing - how far the sister may sit from A.** The first comes
+from wanting a close sister, the second from needing the outgroup term to exist. A candidate has
+to satisfy both, so the budget becomes the smaller of the two. On branch 493, with UHLI as the
+outgroup and HERT as the A representative:
+
+| | ceiling on `path(A,B)` | |
+|---|---|---|
+| budget: `max(2.0, closest + 0.5)` = Ks 2.08 | 0.808 | wanting a close sister |
+| `RELIABLE_PATH - delta` = 1.0 - 0.330 | **0.670** | needing `Ks(B,O)` to exist |
+
+| candidate | `path(A,B)` | budget | shifted ceiling | kept | actual `path(B,O)` |
+|---|---|---|---|---|---|
+| IRBN | 0.650 | pass | pass | yes | 0.981 |
+| RTMU | 0.715 | pass | **fail** | no | 1.045 |
+
+The shifted ceiling reproduces the direct test - IRBN's outgroup pair is inside 1.0, RTMU's is
+not - without computing either `path(B,O)`.
+
+**The arithmetic has to be done in path units, not in Ks.** `Ks = (path/0.4531)^1.266` is
+convex, so the same difference taken in Ks grows with `b` and is not B-independent. On branch
+493 of the paranome table, holding `a` and `c` fixed and varying B's own branch:
+
+| b | path(A,B) | Ks(A,B) | Ks(B,O) | Ks gap | path gap |
+|---|---|---|---|---|---|
+| 0.10 | 0.362 | 0.75 | 1.71 | 0.96 | 0.330 |
+| 0.45 | 0.715 | 1.78 | 2.88 | 1.10 | 0.330 |
+| 1.00 | 1.262 | 3.66 | 4.91 | 1.25 | 0.330 |
+
+This is the drift of up to 0.13 Ks seen across the candidates of a single sister-rate branch
+(1096 -0.20 to -0.16, 667 +0.62 to +0.73): it rises with `Ks(A,B)` because the curve is convex,
+not because the offset is noisy.
+
+**Worked example** - dataset `3b6dee97`, branch 493, which the current rule reports as
+`reliable`. A = HERT, B = RTMU, O = UHLI:
+
+```
+path:  A-B 0.715   A-O 0.854   B-O 1.045
+Ks:    A-B 1.78    A-O 2.23    B-O 2.88      <- the subtracted term has no peak
+a = 0.262   b = 0.453   c = 0.592            (three-point formula, path units)
+delta = c - a = 0.330
+ceiling on path(A,B) = 1.0 - 0.330 = 0.670   (Ks 1.64), against the actual 0.715 -> B rejected
+```
+
+The damage is direct: `Ks_focal = (1.78 + 2.23 - 2.88)/2 = 0.565`, adjusted 1.13. Had the
+unmeasurable `B-O` come back as 2.40 instead of 2.88 - an ordinary error for a flat smear - the
+adjusted value would be 1.61, **+42%**, from one bad term of three.
+
+**How often it binds.** `others/calibration/outgroup_term_survey.py` computes `delta` and the
+three terms for every branch of the 1KP tree from the concatenation tree alone, with no Ks data:
+
+| outgroup role | n | delta > 0 | median delta | Ks(B,O) > 2.7 | rule is blind |
+|---|---|---|---|---|---|
+| C | 2352 | 78.9% | +0.05 | 13.6% | 3.7% |
+| D | 2348 | 88.3% | +0.12 | 16.4% | 6.4% |
+| both | 4700 | 83.6% | +0.08 | 15.0% | 5.0% |
+
+(`delta` in path units; its 95th percentile is +0.62 and it exceeds +0.5 in a small minority.)
+
+"Blind" is the case that matters: `Ks(A,B)` inside the limit, so the rule reports a usable
+representative, while `Ks(B,O)` is beyond it. Per branch, **153 of the 2108 branches whose
+`Ks(A,B)` is measurable (7.3%) have at least one outgroup term that is not**. The offset is against us far more often than not.
+
+**The floor does not already cover this.** Of the 237 blind combinations, 140 have `Ks(A,B)`
+below 2.0, inside the budget floor itself, and they fall in 67 distinct branches. (The
+sister-rate test is not evidence on this point: its sisters were placed on rungs out to 2.7,
+further than the budget would ever pick, so in branch 667 the floor happens to exclude exactly
+the three sisters whose outgroup term is saturated. The test shows the damage is real; the
+survey shows the rule admits it elsewhere.)
+
+**What `delta` is for.** The check itself is cheap either way - `Ks(B,O)` can be computed per
+candidate. `delta` is worth having because it is a constant of the branch:
+
+1. When `delta <= 0`, `Ks(B,O) <= Ks(A,B)` for every candidate, so the existing budget already
+   covers the subtracted term and there is nothing to add. About 16% of combinations.
+2. When `delta > 0`, the constraint collapses into one number per branch and applies to all
+   candidates at once. Both conditions limit how far the sister may sit from A - one because we
+   want a close sister, the other because the outgroup term has to exist - so the budget becomes
+   the smaller of the two, capped at `RELIABLE_PATH - delta` in path units.
+3. When `delta` is large, **no choice of B can fix it**: the ceiling `RELIABLE_PATH - delta`
+   drops below any candidate's path to A. In the 67 branches above the median `delta` is
+   +0.77, leaving a ceiling of 0.23 on `path(A,B)` - Ks 0.36, which no realistic sister clears. Since `delta` does not involve B, a large value is a
+   statement about the OUTGROUP, and the fix is a different C or D, not a different B. Where no
+   outgroup gives a workable `delta`, the branch should be run with the best available B and
+   flagged, as 5.4 already recommends for the Ks 2 term - never silently.
+
+### 5.6 The rule as adopted, and what it cost
+
+Decided on 2026-11-06 and implemented in `run_ksrates_raw/make_branch_subtrees.py`:
+
+1. **The limit is `path 1.0` (Ks 2.7)**, the point at which an ortholog Ks peak stops being a
+   measurement (3.5), not the more conservative Ks 2 the budget applies to `Ks(A,B)`. The
+   subtracted term only has to be *measurable*.
+2. **The clades are chosen oldest first** - D, then C, then B - so every representative is
+   picked knowing the outgroups it will be subtracted against. D is never subtracted against
+   anything inside the dataset and so carries no constraint.
+3. **A candidate must clear EVERY outgroup, not just one.** The project configures
+   `consensus_mode_for_multiple_outgroups = mean among outgroups`, so ksrates averages the
+   adjustment over the outgroups available: one unmeasurable trio contaminates the mean rather
+   than being skipped. (Under `best outgroup` the looser rule would be correct instead.)
+4. **Nothing is rejected outright.** When no candidate clears the limit, the candidates are
+   ranked by *fewest saturating outgroups* first and only then on bin height, so the least bad
+   species is taken rather than the clade being treated as uniformly spoilt; the budget pick is
+   kept and the branch is flagged. Every branch still yields a dataset.
+5. **Three new columns**, `B_outgroup_term`, `C_outgroup_term`, `D_outgroup_term`:
+
+   | value | meaning |
+   |---|---|
+   | `ok` | every picked representative clears every outgroup |
+   | `saturated:D` | every picked representative fails against D - no choice in this clade avoids it |
+   | `saturated:D;partly:C` | all fail against D, only some also against C |
+   | (empty) | no outgroup to be subtracted against, or `--selection quality` |
+
+**What it changed** (`focal_branch_to_dataset_outgroup.tsv` against the paranome table):
+
+| | |
+|---|---|
+| branches changing a representative | 45 of 2354 (1.9%) |
+| dataset ids unchanged | 1713 of 1755 |
+| blind combinations (5.5 survey) | 5.0% -> 4.7% |
+
+The constraint is close to free and close to ineffective, for the same reason: in almost every
+affected branch *no alternative candidate is better*, so the pick stands and the flag fires. It
+only bites where a nearer species existed and bin-height ranking had passed it over. It is not
+costless - over the 23 branches whose B changed, the median bin height fell from 78 to 72 and
+the picks below 20 went from 2 to 7, so measurability was bought with paranome depth in a
+handful of branches; the C picks moved the other way, from 12 below 20 to 8.
+
+**The result worth having is the flags.** 375 branches (16%) have a B whose subtracted term is
+unmeasurable whatever representative is chosen - 289 against both C and D, 76 against D alone,
+6 against C alone, 4 mixed - and 347 (15%) have the same for C, all against D. One branch in
+six therefore has its adjustment averaged over at least one trio that is not a measurement.
+Before this, every one of them was reported as `reliable`, because that flag reads the A-to-clade
+path only and is unaffected by this rule.
+
+**Dropping D would fix about 60% of it**: all 347 C-role saturations become vacuous, since C
+would have no outgroup, and roughly 80 B-role ones clear; the 289 that fail against C as well
+would remain. That is a trade of a four-clade dataset for a measurable one and has not been
+taken - D stays in.
+
 ---
 
 ## 6. Planned extension of the calibration
