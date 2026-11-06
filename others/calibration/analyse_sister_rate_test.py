@@ -40,7 +40,11 @@ def read_design(directory):
         rows = [r for r in csv.DictReader(fh, delimiter="\t") if r["role"] == "sister"]
     by_branch = {}
     for row in rows:
-        by_branch.setdefault((row["branch_index"], row["focal_species"]), {})[row["informal_name"]] = row
+        branch = by_branch.setdefault((row["branch_index"], row["focal_species"]), {})
+        # A transcriptome's Sister_Species ends in its 4-letter code, a genome's in the full
+        # assembly id ("Vitis vinifera Vitvi_Genoscope.12X"), so key the design under both.
+        branch[row["informal_name"]] = row
+        branch[row["species"]] = row
     return by_branch
 
 
@@ -101,9 +105,10 @@ def main():
 
         values, reported, per_sister = [], [], []
         for row in table:
-            informal = row["Sister_Species"].split()[-1]
-            if informal not in sisters:
+            key = row["Sister_Species"].split()[-1]
+            if key not in sisters:
                 continue
+            informal = sisters[key]["informal_name"]
             adjusted = float(row["Adjusted_Mode_Mean"])
             values.append(adjusted)
             reported.append(float(row["Adjusted_Mode_Mean_SD"]))
