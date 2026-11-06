@@ -90,19 +90,19 @@ defensible provided the thresholds are rescaled accordingly (roughly below 400 /
 
 ### 3.1 Data
 
-193 unique species pairs with an ortholog Ks peak on record, exported with
+205 unique species pairs with an ortholog Ks peak on record, exported with
 `ksrates inspect-ks-db <address file> --type ortholog` from the two Ks databases of the
-project: the 1KP database (120 pairs) and the `master_1_2026` database (73 pairs). 75 of the
+project: the 1KP database (132 pairs) and the `master_1_2026` database (73 pairs). 75 of the
 1KP pairs were run specifically to populate the deep end of this calibration (section 6). For
 each pair, the stored value is the **mode** of the ortholog Ks distribution with its bootstrap
 standard deviation (200 replicates), and the predictor is the concatenation-tree path distance
 between the same two species.
 
-**124 of the 193 are used for fitting**: those with a path distance of at most 1.0, which are
-the ones whose Ks distribution actually has a mode. The other 69 are retained in the table and
+**124 of the 205 are used for fitting**: those with a path distance of at most 1.0, which are
+the ones whose Ks distribution actually has a mode. The other 81 are retained in the table and
 plotted, but their recorded peaks are artefacts of the `max_ks_orthologs` cutoff rather than
-measurements (section 3.5). The 11 pairs of the deep run (section 6.1) are not in this count:
-they lie between path 2.38 and 3.42 and none of them yielded a peak at all.
+measurements (section 3.5). The 12 pairs of the deep run (section 6.1) are included in this
+count: they lie between path 2.38 and 3.51 and none of them yielded a peak at all.
 
 Table: [`calibration_pairs.tsv`](../../../ks_analysis/1kp/calibration/calibration_pairs.tsv).
 Figure: `ortholog_ks_vs_path_distance.png`.
@@ -135,8 +135,8 @@ whose amino-acid distances accumulate comparatively slowly.
 1.0. Beyond that the ortholog Ks distribution no longer has a peak to measure: it flattens into
 a smear against the `max_ks_orthologs` cutoff, and the mode the kernel density estimate returns
 is a property of the cutoff rather than of the species pair. Section 3.5 gives the measurement.
-An earlier version of this calibration was fitted on all 193 pairs and therefore fitted partly
-to those artefacts. The 69 excluded pairs are still drawn in the figure, unfilled, because
+An earlier version of this calibration was fitted on all pairs, trusted or not, and therefore
+fitted partly to those artefacts. The 81 excluded pairs are still drawn in the figure, unfilled, because
 showing where the measurement fails is part of the result.
 
 With `path` as the response and ortholog `Ks` as the predictor, over those 124 pairs. That is the
@@ -212,8 +212,12 @@ only slightly larger maps to infinite Ks.
 e^(-k path))` is the biologically motivated shape, since synonymous sites really do saturate.
 Fitted to the trusted pairs it degenerates to a straight line (`Kmax = 2.2e4, k = 4e-5`), which
 is the correct answer: saturation is not visible in a range where Ks has not saturated. Fitting
-it to the full 193 pairs did return a bend, but that bend was being driven by the artefactual
-deep peaks, and its ceiling was unidentified in any case (`Kmax = 17.1 +/- 4.0`). **There is
+it to all 205 pairs does return a bend (`Kmax = 12.8 +/- 1.4, k = 0.242 +/- 0.035`), but that
+bend is driven by the artefactual deep peaks, and the ceiling it reports lies above
+`max_ks_orthologs = 10`, i.e. outside the window in which any Ks was measured, so it describes
+the cutoff rather than saturation. (On the 193 pairs available before the deep run it came out
+as `Kmax = 17.1 +/- 4.0`, unidentified; the extra deep points narrow the interval without making
+the parameter meaningful.) **There is
 therefore no ceiling parameter in this calibration, and the earlier `KS_CEILING = 5.1` has been
 removed** - see 3.5 for why that number was never a biological ceiling.
 
@@ -265,19 +269,29 @@ supermatrix rather than by biology.
 substitution rate, dN/dS = Ka/Ks; values below 1 indicate purifying selection. Taking a
 per-species omega from each species' own paranome run (median Ka/Ks over paralog pairs with Ks
 between 0.1 and 2, available for all 1178 species) and dividing the path by the pair mean makes
-every band worse: 13.3% -> 16.1%, 9.4% -> 19.9%, 5.7% -> 27.9%, 16.2% -> 28.8%. The paranome
-omega is 2.40x the pair's ortholog omega - duplicated genes are under relaxed constraint - and
-on the 193-pair set it is not merely uninformative but mildly *anti*-correlated with it
-(r = -0.22; it was +0.18 on 118 pairs, so the apparent weak signal did not survive more data).
+every band worse: 13.3% -> 16.1%, 9.4% -> 19.9%, 5.7% -> 27.9%, 18.5% -> 28.8%. The paranome
+omega is 2.54x the pair's ortholog omega - duplicated genes are under relaxed constraint - and
+on the 205-pair set it is not merely uninformative but mildly *anti*-correlated with it
+(r = -0.26; it was +0.18 on 118 pairs, so the apparent weak signal did not survive more data).
 
 **The pair's own omega does explain part of the residual, but circularly and inconsistently.**
-Ks/path correlates with 1/omega at r = +0.62 (Ks 0-1) and +0.74 (Ks > 3), and dividing the path
-by the pair's own omega tightens those bands (13.3% -> 12.3%, 7.6% -> 5.2%). But in the Ks 1-2
-band the correlation is r = +0.09 and the correction makes things worse (10.2% -> 15.8%); and
-the omega of a pair is only known once that pair has been run, which is what the prediction is
-meant to avoid. Moreover omega is largely a restatement of depth rather than an independent
-lineage property: over the 193 pairs r(omega, path) = -0.86, because as synonymous sites
-saturate the inflated Ks drives Ka/Ks down. A lineage-pair grouping appears to explain 63% of
+Section (3) of `alternative_predictors.py` reports, over the same 205 pairs:
+
+| band | n | r(Ks/path, 1/omega) | CV of Ks/path | CV of Ks/(path/omega) |
+|---|---|---|---|---|
+| Ks 0-1 | 81 | +0.61 | 13.3% | 12.5% |
+| Ks 1-2 | 35 | +0.12 | 9.4% | 15.5% |
+| Ks 2-3 | 12 | -0.14 | 5.7% | 11.7% |
+| Ks 3+ | 77 | +0.74 | 18.5% | 12.6% |
+
+The correlation is strong only at the two ends, and dividing the path by the pair's own omega
+helps only there (13.3% -> 12.5%, 18.5% -> 12.6%); in the middle two bands, which are the ones
+the selection rule actually works in, the correction makes the scatter substantially worse. The
+Ks 3+ gain is in any case the least meaningful, since those Ks values are the artefacts of
+section 3.5. And the omega of a pair is only known once that pair has been run, which is what
+the prediction is meant to avoid. Moreover omega is largely a restatement of depth rather than an independent
+lineage property: over the 205 pairs r(omega, path) = -0.77, because as synonymous sites
+saturate the inflated Ks drives Ka/Ks down. A lineage-pair grouping appears to explain 64% of
 the variance in omega, but that grouping is itself confounded with depth
 (angiosperm/angiosperm 0.163, angiosperm/gymnosperm 0.066).
 

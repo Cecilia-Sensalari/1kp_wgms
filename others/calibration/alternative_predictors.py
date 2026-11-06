@@ -7,7 +7,8 @@ Ka, Ks and Omega per gene pair - to ask three things:
   1. does a Ka ruler built from the SAME codeml run beat the concat path?
   2. does a per-species omega taken from the paranome runs transfer to the pair's ortholog
      omega, and does correcting by it tighten the calibration?
-  3. is omega an independent lineage property, or just a restatement of depth?
+  3. does the pair's OWN ortholog omega explain the residual scatter of Ks/path?
+  4. is omega an independent lineage property, or just a restatement of depth?
 
     python3 alternative_predictors.py
 """
@@ -140,7 +141,22 @@ def main():
             print(f"  Ks {band_label(lo, hi):<4} (n={len(g):>3}): CV of Ks/path {cv(raw):>5.1f}% "
                   f"-> with paranome-omega correction {cv(corrected):>5.1f}%")
 
-    print("\n=== (3) is omega independent of depth? ===")
+    print("\n=== (3) does the pair's own ortholog omega explain the residual? ===")
+    print("The pair's omega is only known once the pair has been run, so this is not a usable")
+    print("predictor; it bounds how much of the residual is dN/dS variation at all.")
+    print(f"{'band':<8}{'n':>4}{'r(Ks/path, 1/omega)':>22}{'CV of Ks/path':>16}"
+          f"{'CV of Ks/(path/omega)':>24}")
+    for lo, hi in BANDS:
+        g = [r for r in rows if lo <= r["mode"] < hi]
+        if len(g) < 5:
+            continue
+        raw = [r["mode"] / r["path"] for r in g]
+        corrected = [r["mode"] / (r["path"] / r["om"]) for r in g]
+        r_inv = pearson(raw, [1 / r["om"] for r in g])
+        print(f"{band_label(lo, hi):<8}{len(g):>4}{r_inv:>+22.2f}{cv(raw):>15.1f}%"
+              f"{cv(corrected):>23.1f}%")
+
+    print("\n=== (4) is omega independent of depth? ===")
     print(f"r(omega, path distance) over all {len(rows)} pairs = "
           f"{pearson([r['path'] for r in rows], [r['om'] for r in rows]):+.2f}")
     group = C.groups(meta)

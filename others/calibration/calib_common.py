@@ -360,8 +360,8 @@ def clade_containing(nodes, members, min_fraction=0.85, outsider_penalty=3):
 # The fit is restricted to the pairs whose ortholog Ks distribution actually HAS a peak. Beyond
 # path ~1.0 the distributions flatten into a smear against the max_ks_orthologs cutoff and the
 # "peak" the KDE returns is an artefact of that cutoff, not a measurement (3.5). The earlier
-# version of this fit used all 193 pairs and so was fitted partly on those artefacts. Over the
-# pairs that are real the two fits agree closely (median |error| 7.5% against 7.6%); the
+# version of this fit used all 205 pairs and so was fitted partly on those artefacts. Over the
+# pairs that are real the two fits agree closely (median |error| 7.5% against 8.1%); the
 # difference is in the extrapolation, which is exactly what we no longer quote.
 POWER_A, POWER_EXPONENT = 0.4531, 1.266
 # p90 of observed/predicted over the fitted pairs: applying it stops ~90% of pairs from being
