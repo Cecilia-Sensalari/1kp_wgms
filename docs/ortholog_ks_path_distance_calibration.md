@@ -314,17 +314,35 @@ it been retained as a constant, the database would now hold ten values it declar
 
 **The failure begins far earlier than that run.** Scoring every ortholog Ks distribution
 available on disk by its *concentration* - the fraction of retained Ks values within +-0.5 of
-the mode, which a flat smear over the 0-10 window would give as 10%:
+the mode. A concentration is only interpretable against the value a flat distribution of the
+same width would give, so each band is shown with its own **chance level**: the width here is
+the 5-95 percentile span of the retained values, and a unit-wide band placed anywhere on a flat
+distribution of that width holds `1 / span` of it. The chance level is not a constant - a
+shallow pair spans ~3 Ks and a deep one ~7, so chance runs from 32% down to 15%:
 
 | path | 0-0.6 | 0.6-0.8 | 0.8-1.0 | 1.0-1.2 | 1.2-1.5 | 1.5-1.8 | 1.8-2.1 | 2.1-2.4 | 2.4-3.6 |
 |---|---|---|---|---|---|---|---|---|---|
 | n | 7 | 6 | 7 | 8 | 14 | 9 | 14 | 11 | 10 |
 | % of Ks > 10 | 2.9 | 7.8 | 17.6 | 38.0 | 45.9 | 57.0 | 69.8 | 87.1 | 86.8 |
 | median mode | 1.00 | 1.73 | 2.22 | 3.56 | 3.87 | 4.97 | 5.95 | 6.84 | 5.10 |
+| 5-95 span (Ks) | 3.14 | 4.61 | 5.89 | 6.62 | 6.68 | 6.80 | 6.79 | 6.82 | 6.82 |
+| chance level | 32% | 22% | 17% | 15% | 15% | 15% | 15% | 15% | 15% |
 | **concentration** | **68%** | **55%** | **41%** | **21%** | **20%** | **17%** | **16%** | **16%** | **16%** |
+| **concentration / chance** | **2.1x** | **2.5x** | **2.4x** | **1.37x** | **1.33x** | **1.18x** | **1.09x** | **1.06x** | **1.08x** |
 
-A real mode survives to about path 1.0 and is gone by 1.5. These two values are the thresholds
-`RELIABLE_PATH` and `BORDERLINE_PATH` in `calib_common.py`.
+The last row is the one that matters. The mode holds 2.1-2.5x the chance level all the way to
+path 1.0, then 1.37x immediately after it, and it never recovers: beyond path 1.5 the
+distributions are within ~18% of being flat over their own range. A real mode therefore survives
+to about path 1.0 and is gone by 1.5. These two values are the thresholds `RELIABLE_PATH` and
+`BORDERLINE_PATH` in `calib_common.py`.
+
+The chance level has to be computed per distribution and not once for the whole window. An
+earlier version of this section compared every concentration against `2 * 0.5 / max_ks = 10%`,
+the value for a distribution spread evenly over the entire 0-10 window. No real distribution is
+that wide: the deep ones occupy ~6.8 Ks, so their true chance level is ~15%, and the 16-21% they
+score is at chance rather than comfortably above it. The 10% baseline understated the floor and
+so overstated how much peak the deep pairs retain; the conclusion is unchanged but the margin is
+much smaller than it appeared.
 
 **Consequences.**
 
@@ -335,12 +353,14 @@ A real mode survives to about path 1.0 and is gone by 1.5. These two values are 
    real limit near 4.9. That reading was wrong: the plateau is what a bounded uniform
    distribution produces, and it moves with the cutoff rather than with biology. The constant
    has been removed.
-2. **Sixty-nine of the 193 calibration pairs were above path 1.0, and 39 above 1.5.** Their Ks
-   values, up to 5.10, are not measurements, and the earlier power law was fitted partly on
-   them. Refitting on the 124 trusted pairs changes the exponent from 1.204 to 1.266. Over the
-   trusted pairs themselves the two fits are almost indistinguishable (median absolute error
-   7.5% against 7.6%), so the contaminated arm did little damage to the shallow range; the
-   difference is entirely in the extrapolation, which is what is no longer quoted.
+2. **Eighty-one of the 205 calibration pairs are above path 1.0, and 51 above 1.5.** Their
+   recorded Ks values are not measurements, and the earlier power law was fitted partly on them.
+   Fitted to all 205 pairs the power law gives `A = 0.4711, exponent 1.176`; fitted to the 124
+   trusted ones, `A = 0.4531, exponent 1.266`. Over the trusted pairs themselves the two are
+   close (median absolute error 7.5% against 8.1%), so the contaminated arm does little damage
+   to the shallow range; the difference is entirely in the extrapolation, which is what is no
+   longer quoted. (On the 193 pairs available before the deep run of section 6.1, the
+   contaminated exponent was 1.204.)
 3. **A three-parameter model with a real ceiling is not fittable**, and should not be, because
    there is no measured ceiling to fit.
 
