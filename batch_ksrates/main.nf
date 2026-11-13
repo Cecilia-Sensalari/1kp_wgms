@@ -549,12 +549,34 @@ process runParalogJob {
 
 
 /*
- * Runs the Ks estimation of one ortholog species pair, in ortholog_runs/: orthologs-ks (raw Ks values) and then
- * orthologs-analysis (bootstrap peak estimation, which is what stores the peak and the Ks list; orthologs-ks alone
- * never does). One job per pair marked queued in ortholog_pairs.tsv. The analysis is pointed at a one-pair table
+ * Runs the Ks estimation of one ortholog species pair: orthologs-ks (raw Ks values) and then orthologs-analysis
+ * (bootstrap peak estimation, which is what stores the peak and the Ks list; orthologs-ks alone never does). One job
+ * per pair marked queued in ortholog_pairs.tsv. The analysis is pointed at a one-pair table
  * (ortholog_runs/pairs/<A>_<B>.tsv, written here), so that it only processes this pair and not every pair of the
  * focal species. The ksrates output of both commands goes to ortholog_runs/ortholog_ksrates_logs/<A>_<B>.log; the
  * log of an earlier run is kept, renamed with the time of its last modification.
+ *
+ * BOTH COMMANDS RUN ON NODE-LOCAL DISK, not in ortholog_runs/. ksrates writes and reads "ortholog_distributions/"
+ * relative to its working directory (ksrates/wgd_orthologs.py and ksrates/compute_peaks.py), so moving the working
+ * directory moves the whole ortholog analysis, both commands included, with no change to ksrates itself.
+ *
+ * The reason is data loss. /group/esb is NFSv3 mounted `soft`: a write RPC that exceeds timeo x retrans is abandoned
+ * rather than retried, the application is not reliably told (the error surfaces during writeback, long after the
+ * write() returned), and the file keeps its correct size with a run of NUL bytes where the lost data should be.
+ * blastp, which does not check close(), writes by far the largest file here: measured over 116 finished pairs,
+ * .blast.tsv is 182 MB on average and 541 MB at most, 99.4% of all bytes written, against ~1 MB for the .ks.tsv the
+ * peak is actually computed from. Two runs lost 3/45 and then 4/158 tables this way; halving the concurrency reduced
+ * the rate but did not remove it, so the write simply should not cross NFS. See docs/ortholog_runs_local_scratch.md.
+ *
+ * What comes back is the small output only: .ks.tsv (the Ks values the peak comes from) and .orthologs.tsv. The
+ * blast table is deliberately discarded with the scratch directory - it is an intermediate, nothing in the wrapper
+ * reads it, and keeping it would mean 1.6 TB over the full run. Its one use is letting a rerun of the same pair skip
+ * BLAST; that never happens in practice, because a pair is only queued when its peak is MISSING from the Ks
+ * database, and the two commands below put it there. To keep them anyway, add
+ * ortholog_distributions/ ... /.blast.tsv to the copy-back loop.
+ *
+ * The copy-back is also the error check this job was missing: unlike blastp, cp reports a failed close(), so a lost
+ * write during the copy fails the job instead of leaving a holed file behind.
  */
 process runOrthologJob {
 
@@ -571,15 +593,36 @@ process runOrthologJob {
     run_dir = "${base_dir}/ortholog_runs"
     log_dir = "${run_dir}/ortholog_ksrates_logs"
     pair_table = "${run_dir}/pairs/${species_1}_${species_2}.tsv"
+    // Node-local directory the pair is computed in. Empty (the default) means \$TMPDIR if the scheduler set one and
+    // /tmp otherwise. A path other than /tmp or \$HOME has to be in container_mounts as well: singularity binds those
+    // two by itself, nothing else.
+    scratch_root = params.ortholog_scratch_dir ? "'${params.ortholog_scratch_dir}'" : '"${TMPDIR:-/tmp}"'
     """
     mkdir -p ${log_dir} ${run_dir}/pairs
     printf 'Species1\\tSpecies2\\n${species_1}\\t${species_2}\\n' > ${pair_table}
     log=${log_dir}/${species_1}_${species_2}.log
     if [ -e "\$log" ]; then mv "\$log" "\${log%.log}.\$(date -r "\$log" +%Y%m%d_%H%M%S).log"; fi
-    cd ${run_dir}
+
+    scratch_root=${scratch_root}
+    mkdir -p "\$scratch_root"
+    # Self-healing sweep: the trap below covers a normal exit, a failure and scancel, but not SIGKILL or a node
+    # crash, and a leftover here is a 500 MB file on a node nobody is logged in to. Only this job's own prefix,
+    # and only directories old enough that no live job could own them.
+    find "\$scratch_root" -maxdepth 1 -name 'ksortho_*' -type d -mmin +2880 -exec rm -rf {} + 2>/dev/null || true
+    scratch=\$(mktemp -d "\$scratch_root/ksortho_${species_1}_${species_2}_XXXXXX")
+    # Runs whether the job succeeds, fails or is killed, so a 500 MB table is never left on a compute node.
+    trap 'rm -rf "\$scratch"' EXIT
+    mkdir -p "\$scratch/ortholog_distributions"
+    cd "\$scratch"
     {
         ${ksrates_command} orthologs-ks ${config_path} ${expert_arg} ${species_1} ${species_2} --n-threads ${params.ortholog_threads} &&
-        ${ksrates_command} orthologs-analysis ${config_path} ${expert_arg} --ortholog-pairs ${pair_table}
+        ${ksrates_command} orthologs-analysis ${config_path} ${expert_arg} --ortholog-pairs ${pair_table} &&
+        for f in ortholog_distributions/wgd_*/*.ks.tsv ortholog_distributions/wgd_*/*.orthologs.tsv; do
+            [ -e "\$f" ] || continue
+            target=${run_dir}/\$(dirname "\$f")
+            mkdir -p "\$target"
+            cp -p "\$f" "\$target"/
+        done
     } > "\$log" 2>&1
     """
 }
