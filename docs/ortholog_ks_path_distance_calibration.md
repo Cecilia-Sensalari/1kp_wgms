@@ -836,10 +836,12 @@ Decided on 2026-11-06 and implemented in `run_ksrates_raw/make_branch_subtrees.p
 | dataset ids unchanged | 1713 of 1755 |
 | blind combinations (5.5 survey) | 5.0% -> 4.7% |
 
-The constraint is close to free and close to ineffective, for the same reason: in almost every
+The constraint is close to free and rarely binding, for the same reason: in almost every
 affected branch *no alternative candidate is better*, so the pick stands and the flag fires. It
-only bites where a nearer species existed and bin-height ranking had passed it over. It is not
-costless - over the 23 branches whose B changed, the median bin height fell from 78 to 72 and
+only bites where a nearer species existed and bin-height ranking had passed it over. Rarely
+binding is not the same as ineffective: 5.7 measures what a saturated subtracted term does to the
+adjustment, so on the branches where the constraint can act it is averting a shift of tens of
+percent, not a hypothetical one. It is not costless - over the 23 branches whose B changed, the median bin height fell from 78 to 72 and
 the picks below 20 went from 2 to 7, so measurability was bought with paranome depth in a
 handful of branches; the C picks moved the other way, from 12 below 20 to 8.
 
@@ -848,12 +850,71 @@ unmeasurable whatever representative is chosen - 289 against both C and D, 76 ag
 6 against C alone, 4 mixed - and 347 (15%) have the same for C, all against D. One branch in
 six therefore has its adjustment averaged over at least one trio that is not a measurement.
 Before this, every one of them was reported as `reliable`, because that flag reads the A-to-clade
-path only and is unaffected by this rule.
+path only and is unaffected by this rule. 5.7 puts a size on what that costs: an outgroup whose
+subtracted term is saturated places the divergence 22-61% away from where the measurable
+outgroups agree, so a flagged trio is a quantified defect rather than a precaution.
 
 **Dropping D would fix about 60% of it**: all 347 C-role saturations become vacuous, since C
 would have no outgroup, and roughly 80 B-role ones clear; the 289 that fail against C as well
 would remain. That is a trade of a four-clade dataset for a measurable one and has not been
 taken - D stays in.
+
+### 5.7 A saturated subtracted term does damage the adjustment
+
+5.6 argued that the value of the rule is the flags rather than the reselection, but left the
+prior question open: does a subtracted term beyond the measurable range actually distort the
+result, or only threaten to? That was tested on 2026-11-12 and the answer is yes, by tens of
+percent.
+
+**The design, and why the obvious one fails.** Comparing a branch computed before and after the
+rule changes the species as well as the saturation, and two attempts foundered on exactly that:
+in branch 668 the replacement was a congener of the retained representative (path 0.037 apart),
+so the two agreed almost by construction; in branch 669 the *old* pair were the near-identical
+ones (0.046). The comparison has to hold the species fixed and vary only the subtracted term,
+which is possible within a single run: ksrates dates each divergence once per available outgroup
+and writes every one to `adjustment_table_<focal>_all.tsv`. Inside one such group the focal
+species, the sister and all input data are identical; only the outgroup differs.
+
+That needs a group holding both kinds of outgroup, which the real datasets almost never do -
+the rule exists to prevent the mixture. Of 2354 branches only 22 hold both a comfortably
+measurable term (< Ks 2.0) and a saturated one, none in the angiosperms, whose nesting cannot
+reach a saturated outgroup at all (363 valid positions, deepest reachable Ks 1.56). Two datasets
+were therefore built for the purpose in the gymnosperms, where the sibling clade is the
+flowering plants: `others/calibration/design_saturation_test.py`.
+
+**The result**, over the six (focal, sister) groups those datasets yield:
+
+| | n | median deviation from the consensus of the measurable outgroups |
+|---|---|---|
+| subtracted term measurable | 14 | **1.5%** |
+| subtracted term saturated | 10 | **45.7%** |
+
+Paired by group, the saturated outgroup is further out in **6 of 6**, Wilcoxon p = 0.031 - the
+lowest value six paired observations can give. Measurable rows are scored leave-one-out, against
+the median of the *other* measurable rows, so they are not judged against a median they define.
+
+**What licenses reading those numbers** is the agreement of the measurable outgroups among
+themselves: 0.2% to 2.6% per group. When the subtraction is sound it does not matter which
+outgroup is used, so a 22-61% departure is far outside the method's own scatter - 20 to 119
+times it. The fern branches gave 3.2% against 10.5% and 14 of 22 (p = 0.53) for the same test,
+because their "healthy" outgroups sat at Ks 2.1-2.6, barely inside the limit: the contrast was
+between damaged and nearly-damaged. That the result appears only once the anchors are genuinely
+healthy is itself evidence that the limit of 3.5 marks something real.
+
+**The error is not correctable.** Nine of the ten saturated estimates are inflated, which is the
+direction the arithmetic predicts for an underestimated subtracted term, but the tenth is
+deflated. Consistent with 3.5: beyond the limit the reported peak is wherever the kernel density
+estimate happened to land, so the damage varies in size and in sign.
+
+**Limitations.** The saturated outgroups are always the two angiosperms and the measurable ones
+always gymnosperms, so saturation is confounded with the outgroup's lineage; nothing here
+excludes some other property of a flowering-plant outgroup. Six groups, two datasets, one clade.
+And it says nothing about whether the representative the rule substitutes is better than the one
+it rejects - only that subtracting an unmeasurable peak damages the result. Breaking the
+confound needs a saturated gymnosperm outgroup or a measurable angiosperm one, which no position
+in this tree offers.
+
+Analysis: `others/calibration/outgroup_saturation_effect.py`.
 
 ---
 
@@ -945,6 +1006,9 @@ matplotlib) and takes no required arguments.
 | `plot_sister_clade_distributions.py` | the twelve-branch figure and the clade-size table (sections 4, 4.4) |
 | `ortholog_distribution_quality.py` | scores a run's ortholog Ks distributions by concentration and reports whether each peak is a measurement (section 3.5) |
 | `outgroup_term_survey.py` | the three adjustment terms and the offset `delta` for every branch, from the tree alone (section 5.5) |
+| `check_outgroup_term_flags.py` | tests the flags against the peaks actually in the Ks database (section 5.7) |
+| `design_saturation_test.py` | builds datasets that deliberately hold both a measurable and a saturated subtracted term (section 5.7) |
+| `outgroup_saturation_effect.py` | within one run, how far the flagged outgroups fall from the consensus of the measurable ones (section 5.7) |
 | `design_sister_rate_test.py` / `analyse_sister_rate_test.py` | build and read back the sister-rate test (section 5.5) |
 | `recommend_ortholog_pairs.py` | selects the next set of pairs worth running (section 6) |
 | `../root_to_tip_distances.py` | root-to-tip distances from the concatenation tree |
