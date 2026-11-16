@@ -560,7 +560,7 @@ process runParalogJob {
  * relative to its working directory (ksrates/wgd_orthologs.py and ksrates/compute_peaks.py), so moving the working
  * directory moves the whole ortholog analysis, both commands included, with no change to ksrates itself.
  *
- * The reason is data loss. /group/esb is NFSv3 mounted `soft`: a write RPC that exceeds timeo x retrans is abandoned
+ * The reason is data loss. /group/mygroup is NFSv3 mounted `soft`: a write RPC that exceeds timeo x retrans is abandoned
  * rather than retried, the application is not reliably told (the error surfaces during writeback, long after the
  * write() returned), and the file keeps its correct size with a run of NUL bytes where the lost data should be.
  * blastp, which does not check close(), writes by far the largest file here: measured over 116 finished pairs,
@@ -593,17 +593,71 @@ process runOrthologJob {
     run_dir = "${base_dir}/ortholog_runs"
     log_dir = "${run_dir}/ortholog_ksrates_logs"
     pair_table = "${run_dir}/pairs/${species_1}_${species_2}.tsv"
-    // Node-local directory the pair is computed in. Empty (the default) means \$TMPDIR if the scheduler set one and
-    // /tmp otherwise. A path other than /tmp or \$HOME has to be in container_mounts as well: singularity binds those
-    // two by itself, nothing else.
-    scratch_root = params.ortholog_scratch_dir ? "'${params.ortholog_scratch_dir}'" : '"${TMPDIR:-/tmp}"'
+    // The directory the pair is computed in is chosen at run time by the probe below, not fixed here, because
+    // "node-local" cannot be assumed from a variable name. This cluster is the cautionary case: SLURM sets
+    // \$TMPDIR to /scratch/tmp/<user>, which is a second NFS share (a different file server, mounted soft like the group directory).
+    // An earlier version preferred \$TMPDIR and so moved the BLAST tables from one network share to another; the
+    // corruption rate was unchanged, 2.5% of pairs before and 1.9% after, and went unnoticed until the fern shard
+    // of 2026-11-16 was large enough to measure it. The probe rejects network filesystems by type and logs what it
+    // picked, so the same mistake is visible in the first log anyone opens.
+    // ortholog_scratch_dir overrides the probe. A path other than /tmp or \$HOME has to be in container_mounts as
+    // well: singularity binds those two by itself, nothing else.
+    configured_scratch = params.ortholog_scratch_dir ?: ""
+    // Free space a candidate must have, in GB: one pair needs the BLAST table plus its blast_tmp working copy,
+    // and several pairs can land on the same node. Also rules out a small tmpfs /tmp.
+    scratch_min_gb = params.ortholog_scratch_min_gb ?: 10
     """
     mkdir -p ${log_dir} ${run_dir}/pairs
     printf 'Species1\\tSpecies2\\n${species_1}\\t${species_2}\\n' > ${pair_table}
     log=${log_dir}/${species_1}_${species_2}.log
     if [ -e "\$log" ]; then mv "\$log" "\${log%.log}.\$(date -r "\$log" +%Y%m%d_%H%M%S).log"; fi
 
-    scratch_root=${scratch_root}
+    # Everything from here to the matching brace is written into the ksrates log of this pair, so that the
+    # scratch directory and its filesystem type are the first lines of the log anyone opens. The original
+    # \$TMPDIR mistake was invisible precisely because this decision was never recorded anywhere.
+    {
+    # Pick a scratch root: the first candidate that is writable, NOT on a network filesystem, and has room.
+    # stat -f reports the filesystem rather than the file; %T gives its type as a word (xfs, nfs, tmpfs, lustre).
+    pick_scratch() {
+        for cand in "\${SCRATCHDIR:-}" "\${TMPDIR:-}" /tmp /var/tmp; do
+            [ -n "\$cand" ] && mkdir -p "\$cand" 2>/dev/null && [ -w "\$cand" ] || continue
+            fstype=\$(stat -f -c %T "\$cand" 2>/dev/null) || continue
+            case "\$fstype" in
+                nfs*|cifs|smb*|lustre|gpfs|fuse*|afs|9p|ceph) continue ;;
+            esac
+            free_gb=\$(( \$(df -Pk "\$cand" | awk 'NR==2 {print \$4}') / 1048576 ))
+            [ "\$free_gb" -ge ${scratch_min_gb} ] || continue
+            printf '%s %s %s\\n' "\$cand" "\$fstype" "\$free_gb"
+            return 0
+        done
+        return 1
+    }
+    configured='${configured_scratch}'
+    if [ -n "\$configured" ]; then
+        # An explicit setting is obeyed, never silently overridden - but say so if it looks like the wrong kind of
+        # filesystem, since that is exactly the mistake this probe exists to catch.
+        scratch_root="\$configured"
+        mkdir -p "\$scratch_root"
+        fstype=\$(stat -f -c %T "\$scratch_root" 2>/dev/null || echo unknown)
+        free_gb=\$(( \$(df -Pk "\$scratch_root" | awk 'NR==2 {print \$4}') / 1048576 ))
+        echo "scratch directory: \$scratch_root (\$fstype, \${free_gb} GB free, set by ortholog_scratch_dir)"
+        case "\$fstype" in
+            nfs*|cifs|smb*|lustre|gpfs|fuse*|afs|9p|ceph)
+                echo "WARNING: ortholog_scratch_dir is on \$fstype, a network filesystem. If it is mounted 'soft',"
+                echo "WARNING: large writes can be lost without an error - the failure this setting exists to avoid." ;;
+        esac
+        [ "\$free_gb" -ge ${scratch_min_gb} ] || \
+            echo "WARNING: only \${free_gb} GB free there, below ortholog_scratch_min_gb=${scratch_min_gb}."
+    elif read -r scratch_root fstype free_gb < <(pick_scratch); then
+        echo "scratch directory: \$scratch_root (\$fstype, \${free_gb} GB free)"
+    else
+        scratch_root="\${TMPDIR:-/tmp}"
+        echo "WARNING: no local filesystem with ${scratch_min_gb} GB free was found among the candidates."
+        echo "WARNING: falling back to \$scratch_root (\$(stat -f -c %T "\$scratch_root" 2>/dev/null))."
+        echo "WARNING: if that is a network share mounted 'soft', large writes can be lost without an error."
+        echo "WARNING: see docs/ortholog_runs_local_scratch.md; set ortholog_scratch_dir to a node-local path."
+    fi
+    } > "\$log" 2>&1
     mkdir -p "\$scratch_root"
     # Self-healing sweep: the trap below covers a normal exit, a failure and scancel, but not SIGKILL or a node
     # crash, and a leftover here is a 500 MB file on a node nobody is logged in to. Only this job's own prefix,
@@ -623,7 +677,7 @@ process runOrthologJob {
             mkdir -p "\$target"
             cp -p "\$f" "\$target"/
         done
-    } > "\$log" 2>&1
+    } >> "\$log" 2>&1
     """
 }
 

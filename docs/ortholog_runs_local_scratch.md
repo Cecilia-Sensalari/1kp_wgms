@@ -4,13 +4,13 @@ Each ortholog pair is computed in a temporary directory on the compute node's ow
 the small results are copied to `ortholog_runs/ortholog_distributions/`. The BLAST table, which is
 almost everything the step writes, is discarded with that directory.
 
-This is not a performance tweak. It is there because writing it to `/group/esb` silently loses
+This is not a performance tweak. It is there because writing it to `the shared group directory` silently loses
 data.
 
 
 ## The problem
 
-`/group/esb` is NFSv3, mounted on the compute nodes with
+`the shared group directory` is NFSv3, mounted on the compute nodes with
 
     vers=3, soft, proto=tcp, timeo=600, retrans=2, rsize=32768, wsize=32768
 
@@ -109,24 +109,66 @@ is exactly what blastp does not do, so with `set -e` a lost write during the cop
 instead of leaving a holed file behind.
 
 
+## Choosing the scratch directory
+
+**"Node-local" cannot be inferred from a variable name.** This was learned the expensive way. The
+first version of this change wrote to `${TMPDIR:-/tmp}`, on the assumption that a scheduler's
+`$TMPDIR` is node-local. On this cluster SLURM sets
+
+    TMPDIR=/scratch/tmp/<user>
+    /scratch/tmp -> <a second file server>:/mnt/datastore/tmp   nfs, soft
+
+so the BLAST tables moved from one soft-mounted NFS share to another, and kept corrupting. The
+rate barely moved - 2.5% of pairs before the change, 1.9% after - and it went unnoticed for a
+week, because the check being run was "did a table appear under `ortholog_runs`", which was false
+either way. Hard-coding `/tmp` instead is no better: on at least one login node here `/tmp` is itself
+NFS, while on the compute nodes it is local XFS with 70 GB.
+
+So `runOrthologJob` asks the filesystem rather than trusting a name. At job start it walks
+`$SCRATCHDIR`, `$TMPDIR`, `/tmp`, `/var/tmp` and takes the first that is
+
+1. writable,
+2. **not** on a network filesystem - `stat -f -c %T` reports the type as a word (`xfs`, `nfs`,
+   `tmpfs`, `lustre`), and `nfs*`, `cifs`, `smb*`, `lustre`, `gpfs`, `fuse*`, `afs`, `9p` and
+   `ceph` are rejected,
+3. and has at least `ortholog_scratch_min_gb` free - which also rejects a small tmpfs `/tmp`,
+   where a 500 MB table would be spent out of the job's memory.
+
+**Every job logs what it picked**, as its first line:
+
+    scratch directory: /tmp (xfs, 56 GB free)
+
+That line is the point. The original mistake was invisible; this makes it the first thing in
+every one of the logs.
+
+If nothing qualifies, the job warns loudly and falls back to `${TMPDIR:-/tmp}` rather than
+failing - clusters with no node-local disk exist, and a network scratch mounted `hard` is safe.
+The warning names the filesystem type so the reader can judge.
+
 ## Settings
 
 `ortholog_scratch_dir` in `nextflow.config`, default `null`:
 
-- `null` means `$TMPDIR` if the scheduler sets one, `/tmp` otherwise. `/tmp` is local XFS on these
-  nodes, not NFS.
-- Budget about **1.5 GB per concurrent pair** on the node: the table plus the `blast_tmp` working
-  directory it is assembled from.
+- `null` runs the probe above.
+- Any other value is **used as given**, never overridden - but the job still reports its
+  filesystem type and warns if it is networked or short of space. Silently ignoring an explicit
+  setting would repeat the original bug in a different place.
 - A path other than `/tmp` or `$HOME` must also appear in `container_mounts`. Singularity binds
   those two by itself and nothing else.
 
+`ortholog_scratch_min_gb`, default 10: the free space a candidate must have. Budget about
+**1.5 GB per concurrent pair** on the node - the table plus the `blast_tmp` working directory it
+is assembled from - and remember that several pairs can land on the same node.
+
 A `trap ... EXIT` removes the directory whether the job succeeds, fails or is killed, so a 500 MB
-table is never left behind on a compute node.
+table is never left behind on a compute node; a sweep at job start clears anything older than 48
+hours that a SIGKILL or a node crash left behind. Measured over the 524-pair fern shard: no
+scratch directory survived.
 
 
 ## This does not fix the mount
 
-Local scratch removes the concurrent writes that trigger the loss; it does not make `/group/esb`
+Local scratch removes the concurrent writes that trigger the loss; it does not make `the shared group directory`
 safe. Anything else writing large files from many nodes at once — including the copy-back itself,
 in principle — is still exposed. `check_blast_tables.sh` remains worth running as a gate between
 the ortholog stage and the pipeline stage.
