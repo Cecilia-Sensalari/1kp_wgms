@@ -57,32 +57,36 @@ Measured answer: **the two are equivalent on every test available.**
 
 | statistic | AUC, angiosperm set | AUC, bryophyte+lycophyte set | AUC pooled |
 |---|---|---|---|
-| median bin height | 0.894 | 0.925 | 0.897 |
-| window total (= 20 x mean) | 0.906 | 0.919 | **0.900** |
-| mean bar height | 0.906 | 0.919 | 0.900 |
-| tallest bar | 0.878 | 0.912 | 0.876 |
-| lowest bar | 0.883 | 0.912 | 0.894 |
+| median bin height | 0.892 | 0.906 | 0.892 |
+| window total (= 20 x mean) | 0.911 | 0.900 | **0.900** |
+| mean bar height | 0.911 | 0.900 | 0.900 |
+| tallest bar | 0.900 | 0.881 | 0.871 |
+| lowest bar | 0.911 | 0.919 | 0.919 |
+
+(Updated 2026-11-17, with the node weights recomputed over the plotted Ks range. On the earlier bin
+heights, built from the stored weights that also count pairs above Ks 5, the median scored 0.894 /
+0.925 / 0.897. The figures below are also on the recomputed values.)
 
 AUC is the Mann-Whitney statistic against blind visual labels of the paranome plots
 (`usable = yes` versus everything else: no, doubtful, borderline). The labelled set is
 **64 species** - 36 angiosperms (30 usable) and 28 bryophytes and lycophytes (20 usable) -
 scored blind from the plots alone, in `ks_analysis/1kp/ks_quality_review_sheet_*.tsv`.
 Reproduce with `indicator_auc.py`. Across all 1178 species the two statistics correlate
-at Spearman 0.93, and the window total is marginally *better* at predicting the probability of
-a thin bar somewhere in the window (Spearman with the fraction of bars below 30: -0.70 for the
-total, -0.68 for the median).
+at Spearman 0.94, and the window total is marginally *better* at predicting the probability of
+a thin bar somewhere in the window (Spearman with the fraction of bars below 40: -0.83 for the
+total, -0.80 for the median).
 
 They differ only in the direction of their failure. The total flatters a species carrying one
-very tall recent WGD peak (*Hakea drupacea* SIIK: 93rd percentile on the total, 40th on the
-median, tallest bar 556 against a median of 56). The median flatters a flat, deep distribution
-with no dominant peak (the ferns *Athyrium spicant* VITX, *Polypodium* spp.: 88th percentile on
-the median, 62nd on the total).
+very tall recent WGD peak (*Hakea drupacea* SIIK: 91st percentile on the total, 48th on the
+median, tallest bar 571 against a median of 80). The median flatters a flat, deep distribution
+with no dominant peak (the ferns *Athyrium spicant* VITX, *Polypodium* spp.: 84th percentile on
+the median, 62nd on the total, for VITX).
 
 **The median is retained for interpretability, not for performance.** It is a bar height, in
 the same units as what is read off the plot and as the thresholds that were measured on bar
-heights (below 20 unreadable, 20-30 grey zone, above 30 usable). The window total is twenty
+heights (below 25 unreadable, 25-40 grey zone, above 40 usable; 20 and 30 on the earlier values). The window total is twenty
 times a bar height and has no plot-readable meaning. Replacing it with the total would be
-defensible provided the thresholds are rescaled accordingly (roughly below 400 / above 600).
+defensible provided the thresholds are rescaled accordingly (roughly below 500 / above 800).
 
 ---
 

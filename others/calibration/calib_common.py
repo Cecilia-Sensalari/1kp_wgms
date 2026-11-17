@@ -293,6 +293,37 @@ def groups(meta=None, lin=None):
 
 
 # ------------------------------------------------------------------- paranome bin heights
+# Filters ksrates applies to the paralog Ks values before weighting them (fc_extract_ks_list.ks_list_from_df ->
+# wgd_ksrates.viz.filter_compute_weights with its default alignment filters). The upper bound is the max Ks of the
+# plot (max_ks_paralogs in the configs, 5 for now).
+PARALOG_MIN_KS, PARALOG_MAX_KS, PARALOG_MIN_ALIGNMENT_LENGTH = 0.005, 5.0, 300
+
+
+def weighted_paralog_ks(path, max_ks=PARALOG_MAX_KS, min_ks=PARALOG_MIN_KS,
+                        min_alignment_length=PARALOG_MIN_ALIGNMENT_LENGTH):
+    """Paralog pairs of a wgd .ks.tsv as (family, node, Ks, weight), with the weights recomputed.
+
+    The weight columns stored in the .ks.tsv are never used: they were computed for one Ks range, and a plot with
+    another max Ks needs other weights. Here the pairs are filtered first, then each pair gets 1 / (number of kept
+    pairs of the same family and node), so that every duplication node sums to 1 within [min_ks, max_ks], as in
+    the ksrates plots and mixture fits.
+    """
+    rows = []
+    with open(path) as fh:
+        for row in csv.DictReader(fh, delimiter="\t"):
+            try:
+                ks = float(row["Ks"])
+                length = float(row["AlignmentLength"])
+            except (TypeError, ValueError, KeyError):
+                continue
+            if min_ks <= ks <= max_ks and length >= min_alignment_length:
+                rows.append((row["Family"], row["Node"], ks))
+    counts = {}
+    for family, node, _ in rows:
+        counts[(family, node)] = counts.get((family, node), 0) + 1
+    return [(family, node, ks, 1 / counts[(family, node)]) for family, node, ks in rows]
+
+
 def bin_heights(path=BIN_HEIGHTS_TSV):
     """tree tip label -> list of N_BINS weighted-node bar heights over Ks 0.5-2.5."""
     if not os.path.exists(path):

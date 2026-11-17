@@ -59,12 +59,14 @@ yield; a sparse paranome shows no peak whether or not a WGM happened.
 
 The indicator is the **median bin height**: build the species' paranome Ks distribution with
 node-weighting (each duplication node contributes a total weight of 1), take the 20 bars spanning
-Ks 0.5–2.5, and record their median. Thresholds: below 20 unusable, 20–30 borderline, above 30
-usable.
+Ks 0.5–2.5, and record their median. Thresholds: below 25 unusable, 25–40 borderline, above 40
+usable. The weights are recomputed over the plotted Ks range (0.005–5), so each node sums to 1
+within it; the earlier values, built from the stored weights that also count pairs above Ks 5,
+were about 22% lower and gave the thresholds 20 and 30.
 
 This was validated against blind visual labels on 64 species — someone scoring the distributions
-by eye without seeing the numbers. **AUC 0.894**, and the median beats the simpler "total number
-of Ks values" (AUC 0.900 but driven by transcriptome size rather than by peak quality).
+by eye without seeing the numbers. **AUC 0.892**, and the median is close to the simpler "total
+number of Ks values" (AUC 0.900 but driven by transcriptome size rather than by peak quality).
 
 ### Criterion 2 — will the ortholog Ks peak with this outgroup be measurable?
 

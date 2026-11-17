@@ -112,7 +112,11 @@ One row per branch.
   closest representative chosen for that clade. Empty under `--selection quality`.
 - `B_reliability`, `C_reliability`, `D_reliability`: `reliable` (path <= 1.0), `borderline` (<= 1.5) or
   `unreliable`, for that same closest representative - the pair whose ortholog Ks peak anchors the
-  rate adjustment.
+  rate adjustment. In expected Ks, path 1.0 is about 2.7 and path 1.5 about 4.6.
+- `B_outgroup_term`, `C_outgroup_term`, `D_outgroup_term`: whether the representatives of the clade form
+  measurable pairs (path <= 1.0) with the representatives of the older clades they are adjusted against: `ok`;
+  `saturated:<roles>` when every representative fails against those roles; `partly:<roles>` when only some do.
+  Empty for D, which is adjusted against nothing (see `ortholog_ks_path_distance_calibration.md`, 5.5).
 - `rate_adjustment_reliability`: the best of the three, since one usable outgroup is enough to
   anchor an adjustment; `none` if no clade yielded a candidate.
 
@@ -213,17 +217,23 @@ computed once per species from the paralog export of `ksrates inspect-ks-db`, an
 bins and therefore cannot move the median. This matters because most branches of the tree do not host a WGM:
 an indicator sensitive to the peak would preferentially select species that already show the signal the analysis
 is testing for. Recomputing the median after removing, for every species, the five-bin block centred on its own
-tallest bin changes the ranking of the 1178 species by a Spearman rho of 0.986 (typical change in the value
-itself, 7%). Species with and without recent WGMs are not separated by this residual (Vitis, no lineage-specific
-WGM, 0.78; Glycine soja and Populus, both with recent WGMs, 0.98 and 0.99). Recent WGM peaks lie below Ks 0.5
+tallest bin changes the ranking of the 1178 species by a Spearman rho of 0.987 (typical change in the value
+itself, 6%). Species with and without recent WGMs are not separated by this residual (Vitis, no lineage-specific
+WGM, 0.85; Glycine soja and Populus, both with recent WGMs, 0.96 and 0.99). Recent WGM peaks lie below Ks 0.5
 and fall outside the window by construction.
 
 **It measures data, not biology.** Amborella trichopoda is in the dataset twice, as the 1KP transcriptome URDJ
-and as the genome Ambtr_v1.0.27: same species and same WGM history, median bin height 38 and 80 respectively.
+and as the genome Ambtr_v1.0.27: same species and same WGM history, median bin height 51 and 103 respectively.
 
-**Thresholds.** Below 20 the distribution was judged unreadable, 20 to 30 is a grey zone, above 30 it is usable
-(see the validation below). The threshold is only used to flag a branch whose best available representative falls
-below it; it never prevents a representative from being chosen.
+**Thresholds.** Below 25 the distribution was judged unreadable, 25 to 40 is a grey zone, above 40 it is usable
+(see the validation below). Before 2026-11-17 the bin heights were built from the stored weights, which also count
+the pairs above Ks 5; they were about 22% lower, and the thresholds were 20 and 30. The figures in this section are
+on the recomputed values unless marked. The node weights are recomputed over the
+plotted Ks range (0.005-5) by `calib_common.weighted_paralog_ks`, never read from the Ks files. The selection does not
+use the threshold: it never prevents a representative from being chosen, and the tables carry no flag for it. It is
+applied when the plots are read (`interpret_ks/call_branches.py --thin`, default 25): a species below it cannot carry a
+WGM call, so a branch with only thin A species is `uninformative`, and one with only thin B species at most `wgm_weak`
+(see [`interpreting_branch_ks_plots.md`](interpreting_branch_ks_plots.md)).
 
 ### Indicator 2: expected ortholog Ks (clades B, C, D)
 
@@ -292,12 +302,13 @@ The margin of 0.5 Ks expresses "do not pay more than 0.5 Ks of extra saturation 
 candidate is saturated, the budget is simply Ks 2 and the median bin height decides; where every candidate is
 saturated, the budget floats up to just above the best achievable value, so the best-populated of the
 near-minimum candidates is taken instead of either extreme. A hard filter was tried first and rejected: ranking
-the saturated case by expected Ks alone selected a hornwort with a median bin height of 8 in exchange for 0.05 Ks,
+the saturated case by expected Ks alone selected a hornwort with a median bin height of 8 (earlier values) in exchange for 0.05 Ks,
 and ranking it by median bin height alone selected a representative at Ks 3.5.
 
-A branch whose chosen representative lies above the Ks 2 cut-off, or whose A representative falls below a median
-bin height of 20, is flagged rather than dropped: the dataset is still built, and the flag records that the result
-rests on a saturated anchor or on a distribution too thin to read.
+A branch whose representatives are all saturated is flagged rather than dropped: the dataset is still built. Ks 2 is
+only the floor of the budget and sets no flag. The flags of the current tables are set by path distance instead
+(`*_reliability`, `*_outgroup_term`; see the output columns above). An A representative below a median bin height of
+25 is not flagged here either; it is caught when the plots are read (see the thresholds above).
 
 ### Validation
 
@@ -313,19 +324,24 @@ plot path, with the indicator values kept in a separate key file, and the specie
   the same clade.
 - **Round 2** (36 angiosperm transcriptomes, stratified uniformly on median bin height, labelled on two axes,
   `usable` and `peak`) returned 30 usable, 6 borderline and no unusable species, with the borderline rate falling
-  monotonically across the six strata (50, 33, 17, 0, 0, 0 %). AUC against the labels 0.90.
+  monotonically across the six strata (50, 33, 17, 0, 0, 0 %; strata drawn on the earlier values). AUC against the
+  labels 0.89.
 - **Round 3** (16 bryophyte and 12 lycophyte transcriptomes, same design) produced the only unusable labels of the
-  three rounds, both below a median bin height of 18, with every species above 30 labelled usable. AUC 0.93.
+  three rounds, at median bin heights of 20.2 and 24.6. The doubtful labels spread further, from 25.7 up to 67.7
+  (QKQO). AUC 0.91.
+
+The recomputed bin heights do not separate the labels better than the earlier ones (AUC 0.89 and 0.93 before,
+0.89 and 0.91 now): the fix makes the bars match the ksrates plot, not the indicator more predictive.
 
 Splitting the label into `usable` and `peak` was necessary: Hedera helix has 16049 duplication nodes and a median
-bin height of 95 but no interpretable peak, which is a biological outcome and not a defect of the data. Under a
+bin height of 121 but no interpretable peak, which is a biological outcome and not a defect of the data. Under a
 single label it would have counted as a failure of the indicator.
 
 Indicators tested on the same labels and rejected, as AUC (angiosperms / bryophytes+lycophytes):
 
 ```text
-median bin height                0.90 / 0.93    retained
-peak bin height                  0.86 / 0.92    rejected: depends on the WGM being present
+median bin height                0.89 / 0.91    retained
+tallest bar (Ks 0.5-2.5)         0.90 / 0.88    rejected: depends on the WGM being present
 duplication nodes                0.89 / 0.85    rejected: confounded with lineage and assembly size
 BUSCO                            0.73 / 0.83    retained as a tie-breaker only
 weighted share of Ks below 0.1    0.66 / 0.51   rejected, and higher values go with usable plots
